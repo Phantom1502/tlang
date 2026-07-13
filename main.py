@@ -1,6 +1,6 @@
-from app.tlang.execution import Interpreter
-from app.tlang.ast import Parser
-from app.tlang.lexical import Lexer
+from app.lang.execution import Interpreter
+from app.lang.ast import Parser
+from app.lang.lexical import Lexer
 
 # =====================================================================
 # CHƯƠNG TRÌNH CHẠY THỬ (DEMO)
