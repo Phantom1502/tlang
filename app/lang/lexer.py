@@ -9,9 +9,14 @@ from app.lang.tokens import Token, TokenType
 # Bảng token spec — mỗi mục là (TokenType, regex pattern KHÔNG có group
 # con để việc xác định token type qua match.lastgroup luôn chính xác).
 #
-# Thứ tự không quan trọng để tránh nhầm lẫn (mỗi pattern bắt đầu bằng
-# tiền tố khác nhau: '<chart', '<think', '<trend', 'SL:', 'RR:', tên
-# ACTION_TYPE...), nhưng vẫn giữ nhóm liên quan gần nhau cho dễ đọc.
+# current_price/zone/SL: chỉ tag mở/đóng + nhãn là atomic; GIÁ TRỊ SỐ ở
+# giữa được tách thành chuỗi DIGIT rời (digit-decompose, zero-pad
+# DIGIT_PAD chữ số) — đồng bộ với quyết định tokenizer để model học so
+# sánh/số học tốt hơn thay vì tra bảng 1024 embedding độc lập.
+#
+# Chart OHLC (<O_543>...) và RR (<RR_1>..<RR_9>) GIỮ NGUYÊN atomic —
+# chart chỉ cần đọc (không cần số học trực tiếp), RR range quá nhỏ nên
+# enum token tự mô tả rõ nghĩa hơn 1 con số trần.
 # =====================================================================
 _TOKEN_SPEC = [
     (TokenType.CHART_OPEN, r"<chart>"),
@@ -26,9 +31,13 @@ _TOKEN_SPEC = [
     (TokenType.THINK_CLOSE, r"</think>"),
 
     (TokenType.TREND, r"<trend>(?:UP|DOWN|RANGE)</trend>"),
-    (TokenType.CURRENT_PRICE, r"<current_price>\d+</current_price>"),
-    (TokenType.ZONE_SUPPORT, r"<zone_support>\d+:\d+</zone_support>"),
-    (TokenType.ZONE_RESISTANCE, r"<zone_resistance>\d+:\d+</zone_resistance>"),
+
+    (TokenType.CURRENT_PRICE_OPEN, r"<current_price>"),
+    (TokenType.CURRENT_PRICE_CLOSE, r"</current_price>"),
+    (TokenType.ZONE_SUPPORT_OPEN, r"<zone_support>"),
+    (TokenType.ZONE_SUPPORT_CLOSE, r"</zone_support>"),
+    (TokenType.ZONE_RESISTANCE_OPEN, r"<zone_resistance>"),
+    (TokenType.ZONE_RESISTANCE_CLOSE, r"</zone_resistance>"),
     (TokenType.PRICE_IN_ZONE, r"<price_in_zone>"),
     (TokenType.GOOD_PRICE_ACTION, r"<good_price_action>"),
 
@@ -37,8 +46,15 @@ _TOKEN_SPEC = [
     # CANCEL_*/WAIT_* phải đứng trước BUY/SELL trong danh sách để dễ đọc,
     # dù thực tế alternation không xung đột vì ký tự đầu khác nhau.
     (TokenType.ACTION_TYPE, r"\b(?:CANCEL_BUY|CANCEL_SELL|WAIT_BUY|WAIT_SELL|BUY|SELL|HOLD)\b"),
-    (TokenType.SL, r"SL:\d+"),
-    (TokenType.RR, r"RR:\d+"),
+
+    (TokenType.SL_LABEL, r"SL:"),
+    (TokenType.RR, r"<RR_[1-9]>"),
+
+    # DIGIT/COLON: dùng chung cho current_price/zone/SL — đặt SAU các
+    # pattern có ':' cụ thể hơn (SL_LABEL) để tránh nhầm nghĩa, dù về
+    # mặt kỹ thuật không xung đột (SL_LABEL là literal "SL:" trọn vẹn).
+    (TokenType.DIGIT, r"[0-9]"),
+    (TokenType.COLON, r":"),
 ]
 
 _WS_RE = re.compile(r"\s+")

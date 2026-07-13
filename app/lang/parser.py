@@ -13,7 +13,7 @@ from app.lang.ast_nodes import (
     ZoneNode,
 )
 from app.lang.lexer import Lexer
-from app.lang.tokens import Token, TokenType
+from app.lang.tokens import BIN_MAX, BIN_MIN, DIGIT_PAD, Token, TokenType
 
 
 # =====================================================================
@@ -70,8 +70,8 @@ class Parser:
     """
 
     EXPECTED_CANDLE_COUNT = 50
-    VALID_BIN_RANGE: Tuple[int, int] = (0, 1023)
-    VALID_RR_RANGE: Tuple[int, int] = (1, 9)
+    VALID_BIN_RANGE: Tuple[int, int] = (BIN_MIN, BIN_MAX)
+    DIGIT_PAD_LEN: int = DIGIT_PAD   # số digit mong đợi cho mỗi field digit-decompose (zero-pad)
 
     # Token dùng để đồng bộ hoá khi panic-mode — đều là ranh giới block rõ ràng.
     SYNC_TOKENS = {
@@ -114,6 +114,36 @@ class Parser:
         """Bỏ token cho tới khi gặp điểm đồng bộ hoá (luôn dừng lại vì EOF nằm trong SYNC_TOKENS)."""
         while not self._check(*self.SYNC_TOKENS):
             self._advance()
+
+    def _parse_digit_run(self, label: str) -> Optional[int]:
+        """
+        Gom các token DIGIT liên tiếp thành 1 số nguyên — dùng chung cho
+        current_price/zone/SL (mọi field digit-decompose, zero-pad
+        DIGIT_PAD_LEN chữ số).
+
+        Best-effort: nếu completion sai số lượng digit (thiếu/thừa), vẫn
+        lấy được bao nhiêu hay bấy nhiêu và ghi nhận lỗi loại "value" —
+        không raise, không chặn parse phần còn lại.
+        """
+        digits: List[str] = []
+        while self._check(TokenType.DIGIT):
+            digits.append(self._advance().value)
+
+        if not digits:
+            self._error(f"Thiếu digit cho {label}", severity="value")
+            return None
+
+        if len(digits) != self.DIGIT_PAD_LEN:
+            self._error(
+                f"{label} có {len(digits)} digit, mong đợi đúng {self.DIGIT_PAD_LEN} (zero-pad)",
+                severity="value",
+            )
+
+        value = int("".join(digits))
+        if not (self.VALID_BIN_RANGE[0] <= value <= self.VALID_BIN_RANGE[1]):
+            self._error(f"Giá trị bin cho {label} ngoài phạm vi hợp lệ [0,1023]: {value}", severity="value")
+            return None
+        return value
 
     # ------------------------------------------------------------------
     # Grammar rules
@@ -196,17 +226,36 @@ class Parser:
             tok = self._advance()
             think.trend = self._extract_enum(tok.value, ("UP", "DOWN", "RANGE"))
 
-        if not self._check(TokenType.CURRENT_PRICE):
+        if not self._check(TokenType.CURRENT_PRICE_OPEN):
             self._error("Thiếu <current_price> — field này BẮT BUỘC trong mọi think_block", severity="value")
         else:
-            tok = self._advance()
-            think.current_price_bin = self._extract_int(tok.value)
+            self._advance()
+            think.current_price_bin = self._parse_digit_run("current_price")
+            if not self._check(TokenType.CURRENT_PRICE_CLOSE):
+                self._error(f"Mong đợi </current_price>, nhận được {self._current().type.name}")
+            else:
+                self._advance()
 
-        if self._check(TokenType.ZONE_SUPPORT, TokenType.ZONE_RESISTANCE):
-            tok = self._advance()
-            direction = "support" if tok.type == TokenType.ZONE_SUPPORT else "resistance"
-            lower, upper = self._extract_two_ints(tok.value)
-            think.zone = ZoneNode(direction=direction, lower_bin=lower, upper_bin=upper)
+        if self._check(TokenType.ZONE_SUPPORT_OPEN, TokenType.ZONE_RESISTANCE_OPEN):
+            is_support = self._check(TokenType.ZONE_SUPPORT_OPEN)
+            direction = "support" if is_support else "resistance"
+            close_type = TokenType.ZONE_SUPPORT_CLOSE if is_support else TokenType.ZONE_RESISTANCE_CLOSE
+            self._advance()  # tag mở
+
+            lower = self._parse_digit_run(f"zone_{direction}.lower")
+            if not self._check(TokenType.COLON):
+                self._error(f"Thiếu ':' phân cách trong zone_{direction}")
+            else:
+                self._advance()
+            upper = self._parse_digit_run(f"zone_{direction}.upper")
+
+            if not self._check(close_type):
+                self._error(f"Thiếu tag đóng cho zone_{direction}")
+            else:
+                self._advance()
+
+            if lower is not None and upper is not None:
+                think.zone = ZoneNode(direction=direction, lower_bin=lower, upper_bin=upper)
 
         if self._check(TokenType.PRICE_IN_ZONE):
             self._advance()
@@ -239,16 +288,13 @@ class Parser:
             tok = self._advance()
             action.action_type = tok.value.strip()
 
-        if self._check(TokenType.SL):
-            tok = self._advance()
-            action.sl = self._extract_int(tok.value)
+        if self._check(TokenType.SL_LABEL):
+            self._advance()
+            action.sl = self._parse_digit_run("SL")
 
         if self._check(TokenType.RR):
             tok = self._advance()
-            rr_val = self._extract_int(tok.value)
-            if rr_val is not None and not (self.VALID_RR_RANGE[0] <= rr_val <= self.VALID_RR_RANGE[1]):
-                self._error(f"RR={rr_val} ngoài phạm vi vocab hợp lệ (1-9)", severity="value")
-            action.rr = rr_val
+            action.rr = self._extract_int(tok.value)   # "<RR_9>" -> 9; phạm vi 1-9 đã enforce ở tầng lexer
 
         if not self._check(TokenType.ACTION_CLOSE):
             self._error(f"Mong đợi </action>, nhận được {self._current().type.name}")
@@ -309,15 +355,6 @@ class Parser:
             return None
         m = re.search(r"\d+", raw)
         return int(m.group()) if m else None
-
-    @staticmethod
-    def _extract_two_ints(raw: Optional[str]) -> Tuple[Optional[int], Optional[int]]:
-        if raw is None:
-            return None, None
-        nums = re.findall(r"\d+", raw)
-        if len(nums) < 2:
-            return None, None
-        return int(nums[0]), int(nums[1])
 
     @staticmethod
     def _extract_enum(raw: Optional[str], choices: Tuple[str, ...]) -> Optional[str]:

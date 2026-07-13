@@ -7,9 +7,15 @@ kiểm tra nhanh các case điển hình trước khi ghép vào reward_func.
 from app.lang.parser import Parser
 
 
+def fmt_bin(n: int, pad: int = 4) -> str:
+    """Format 1 số bin thành chuỗi digit CÁCH KHOẢNG TRẮNG (zero-pad),
+    đúng quy ước digit-decompose cho current_price/zone/SL."""
+    return " ".join(str(n).zfill(pad))
+
+
 def make_chart(n: int = 50, close_last: int = 512) -> str:
     """Sinh nhanh 1 chart_block n nến, ép Close nến cuối = close_last để
-    test rule current_price khớp chart thật."""
+    test rule current_price khớp chart thật. Chart OHLC vẫn atomic <O_x>."""
     candles = []
     for i in range(n):
         c = close_last if i == n - 1 else 500 + i
@@ -20,57 +26,65 @@ def make_chart(n: int = 50, close_last: int = 512) -> str:
 CASES = {
     "well_formed_buy": (
         make_chart(close_last=512)
-        + " <think> <trend>UP</trend> <current_price>512</current_price> "
-          "<zone_support>500:510</zone_support> <price_in_zone> <good_price_action> </think>"
-        + " <action> BUY SL:495 RR:5 </action>"
+        + f" <think> <trend>UP</trend> <current_price> {fmt_bin(512)} </current_price> "
+          f"<zone_support> {fmt_bin(500)} : {fmt_bin(510)} </zone_support> <price_in_zone> <good_price_action> </think>"
+        + f" <action> BUY SL: {fmt_bin(495)} <RR_5> </action>"
     ),
     "well_formed_cancel_buy": (
         make_chart(close_last=512)
-        + " <think> <trend>UP</trend> <current_price>512</current_price> "
-          "<zone_support>500:510</zone_support> <price_in_zone> </think>"
+        + f" <think> <trend>UP</trend> <current_price> {fmt_bin(512)} </current_price> "
+          f"<zone_support> {fmt_bin(500)} : {fmt_bin(510)} </zone_support> <price_in_zone> </think>"
         + " <action> CANCEL_BUY </action>"
     ),
     "well_formed_hold": (
         make_chart(close_last=512)
-        + " <think> <trend>RANGE</trend> <current_price>512</current_price> </think>"
+        + f" <think> <trend>RANGE</trend> <current_price> {fmt_bin(512)} </current_price> </think>"
         + " <action> HOLD </action>"
     ),
     "missing_current_price": (
         make_chart(close_last=512)
-        + " <think> <trend>UP</trend> "
-          "<zone_support>500:510</zone_support> <price_in_zone> <good_price_action> </think>"
-        + " <action> BUY SL:495 RR:5 </action>"
+        + f" <think> <trend>UP</trend> "
+          f"<zone_support> {fmt_bin(500)} : {fmt_bin(510)} </zone_support> <price_in_zone> <good_price_action> </think>"
+        + f" <action> BUY SL: {fmt_bin(495)} <RR_5> </action>"
     ),
     "wrong_current_price_value": (
         make_chart(close_last=512)
-        + " <think> <trend>UP</trend> <current_price>999</current_price> "
-          "<zone_support>500:510</zone_support> <price_in_zone> <good_price_action> </think>"
-        + " <action> BUY SL:495 RR:5 </action>"
+        + f" <think> <trend>UP</trend> <current_price> {fmt_bin(999)} </current_price> "
+          f"<zone_support> {fmt_bin(500)} : {fmt_bin(510)} </zone_support> <price_in_zone> <good_price_action> </think>"
+        + f" <action> BUY SL: {fmt_bin(495)} <RR_5> </action>"
     ),
     "cancel_with_forbidden_fields": (
         make_chart(close_last=512)
-        + " <think> <trend>UP</trend> <current_price>512</current_price> "
-          "<zone_support>500:510</zone_support> <price_in_zone> <good_price_action> </think>"
-        + " <action> CANCEL_BUY SL:495 RR:5 </action>"
+        + f" <think> <trend>UP</trend> <current_price> {fmt_bin(512)} </current_price> "
+          f"<zone_support> {fmt_bin(500)} : {fmt_bin(510)} </zone_support> <price_in_zone> <good_price_action> </think>"
+        + f" <action> CANCEL_BUY SL: {fmt_bin(495)} <RR_5> </action>"
     ),
     "buy_missing_sl_rr": (
         make_chart(close_last=512)
-        + " <think> <trend>UP</trend> <current_price>512</current_price> "
-          "<zone_support>500:510</zone_support> <price_in_zone> <good_price_action> </think>"
+        + f" <think> <trend>UP</trend> <current_price> {fmt_bin(512)} </current_price> "
+          f"<zone_support> {fmt_bin(500)} : {fmt_bin(510)} </zone_support> <price_in_zone> <good_price_action> </think>"
         + " <action> BUY </action>"
     ),
     "rr_out_of_vocab_range": (
+        # <RR_15> không khớp pattern <RR_[1-9]> -> lexer trả UNKNOWN -> parser báo "thiếu RR"
         make_chart(close_last=512)
-        + " <think> <trend>UP</trend> <current_price>512</current_price> "
-          "<zone_support>500:510</zone_support> <price_in_zone> <good_price_action> </think>"
-        + " <action> BUY SL:495 RR:15 </action>"
+        + f" <think> <trend>UP</trend> <current_price> {fmt_bin(512)} </current_price> "
+          f"<zone_support> {fmt_bin(500)} : {fmt_bin(510)} </zone_support> <price_in_zone> <good_price_action> </think>"
+        + f" <action> BUY SL: {fmt_bin(495)} <RR_15> </action>"
+    ),
+    "digit_count_wrong": (
+        # current_price chỉ có 2 digit thay vì 4 -> lỗi "value" nhưng vẫn parse tiếp được
+        make_chart(close_last=512)
+        + " <think> <trend>UP</trend> <current_price> 5 1 2 </current_price> "
+        + f"<zone_support> {fmt_bin(500)} : {fmt_bin(510)} </zone_support> <price_in_zone> <good_price_action> </think>"
+        + f" <action> BUY SL: {fmt_bin(495)} <RR_5> </action>"
     ),
     "garbage_completion": "day la mot doan text hoan toan random khong theo grammar gi ca <chart broken",
     "wrong_candle_count": (
         make_chart(n=10, close_last=512)
-        + " <think> <trend>UP</trend> <current_price>512</current_price> "
-          "<zone_support>500:510</zone_support> <price_in_zone> <good_price_action> </think>"
-        + " <action> BUY SL:495 RR:5 </action>"
+        + f" <think> <trend>UP</trend> <current_price> {fmt_bin(512)} </current_price> "
+          f"<zone_support> {fmt_bin(500)} : {fmt_bin(510)} </zone_support> <price_in_zone> <good_price_action> </think>"
+        + f" <action> BUY SL: {fmt_bin(495)} <RR_5> </action>"
     ),
 }
 
