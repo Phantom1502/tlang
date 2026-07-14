@@ -1,8 +1,8 @@
 
 import json
 import pandas as pd
-from app.trading.gen.base_gen import BaseGenerator
-from app.trading.core.candle import CandleParser
+from app.gen.base_gen import BaseGenerator
+from app.preprocess.candle import CandleParser
 from typing import List, Dict
 import random
 
