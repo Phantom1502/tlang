@@ -2,3 +2,5 @@ app/lang/__pycache__/
 app/reward/__pycache__/
 app/gen/__pycache__/
 app/utils/__pycache__/
+app/tokenizer/__pycache__/
+app/model/__pycache__/
