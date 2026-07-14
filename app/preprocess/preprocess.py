@@ -58,7 +58,7 @@ class Preprocess:
         
         base_name = os.path.basename(csv_path)  # Trả về: "AUDUSD_15Min.csv"
         filename = os.path.splitext(base_name)[0]  # Trả về: "AUDUSD_15Min"
-        output_file = os.path.join(output_path, f"{filename}_preprocessed.csv")
+        output_file = os.path.join(output_path, f"{filename}.csv")
         
         df.to_csv(output_file, index=False)
         

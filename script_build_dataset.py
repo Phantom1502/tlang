@@ -17,6 +17,8 @@ import pandas as pd
 from app.gen.dataset_builder import build_grpo_parquet, build_pretrain_sft_parquet, load_scale_factors
 import os
 
+import glob
+
 def build_dataset(input_csv: str, output_folder: str):
     base_name = os.path.basename(input_csv)  # Trả về: "AUDUSD_15Min.csv"
     filename = os.path.splitext(base_name)[0]  # Trả về: "AUDUSD_15Min"
@@ -32,7 +34,7 @@ def build_dataset(input_csv: str, output_folder: str):
     grpo_df = build_grpo_parquet(
         csv_paths_with_scale=[(input_csv, filename, scale)],
         output_path=output_path,
-        n_augments=10,
+        n_augments=5,
         seed=42,
     )
     
@@ -43,8 +45,8 @@ def build_dataset(input_csv: str, output_folder: str):
     output_path = f"{output_folder}/{filename}_pretrain_sft_dataset.parquet"
     sft_df = build_pretrain_sft_parquet(
         csv_paths_with_scale=[(input_csv, filename, scale)],
-        output_path="/tmp/sft_dataset.parquet",
-        samples_per_chart=5,
+        output_path=output_path,
+        samples_per_chart=10,
         n_augments=10,
         seed=42,
     )
@@ -52,7 +54,9 @@ def build_dataset(input_csv: str, output_folder: str):
     print(f"Build completed for {input_csv}")
 
 if __name__ == "__main__":
-    build_dataset(
-        input_csv = "data/preprocessed/train/AUDUSD_15Min_preprocessed.csv",
-        output_folder="data/dataset/"    
-    )
+    input_csvs = "data/preprocessed/train/*.csv"
+    output_folder = "data/dataset/"
+    
+    csv_paths = glob.glob(input_csvs)
+    for csv_path in csv_paths:
+        build_dataset(csv_path, output_folder)

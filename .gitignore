@@ -9,3 +9,5 @@ data/raw/val/
 data/tmp/
 app/preprocess/__pycache__/
 data/preprocessed/train/
+data/preprocessed/val/
+data/dataset/
