@@ -4,3 +4,7 @@ app/gen/__pycache__/
 app/utils/__pycache__/
 app/tokenizer/__pycache__/
 app/model/__pycache__/
+data/raw/train/
+data/raw/val/
+data/tmp/
+app/preprocess/__pycache__/

@@ -141,7 +141,7 @@ def main() -> None:
 
     from transformers import Trainer, TrainingArguments
 
-    from app.data.data_module import DataArguments, make_data_module
+    from data.data_module import DataArguments, make_data_module
     from app.tokenizer.hub import load_tokenizer
     from app.train.common import resolve_resume_checkpoint
 
