@@ -12,6 +12,19 @@ from app.reward.forward_test import (
     BIN_MAX,
     HORIZON,
 )
+from app.reward.reward_func import (
+    R_WF_FULL,
+    R_SEM_FULL,
+    EXTRA_SEMANTIC_PENALTY,
+    DEFAULT_WEIGHT,
+    WeightTable,
+    weight_table,
+    RolloutRecord,
+    StatsCollector,
+    stats_collector,
+    score_completion,
+    unified_reward_func,
+)
 
 __all__ = [
     "OutcomeStatus",
@@ -26,4 +39,15 @@ __all__ = [
     "BIN_MIN",
     "BIN_MAX",
     "HORIZON",
+    "R_WF_FULL",
+    "R_SEM_FULL",
+    "EXTRA_SEMANTIC_PENALTY",
+    "DEFAULT_WEIGHT",
+    "WeightTable",
+    "weight_table",
+    "RolloutRecord",
+    "StatsCollector",
+    "stats_collector",
+    "score_completion",
+    "unified_reward_func",
 ]
