@@ -8,3 +8,4 @@ data/raw/train/
 data/raw/val/
 data/tmp/
 app/preprocess/__pycache__/
+data/preprocessed/train/

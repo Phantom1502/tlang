@@ -56,12 +56,14 @@ class Preprocess:
         # Tạo thư mục output nếu chưa tồn tại
         os.makedirs(output_path, exist_ok=True)
         
-        filename = csv_path.split('/')[-1].split('.')[0]
-        output_file = f"{output_path}/{filename}_preprocessed.csv"
+        base_name = os.path.basename(csv_path)  # Trả về: "AUDUSD_15Min.csv"
+        filename = os.path.splitext(base_name)[0]  # Trả về: "AUDUSD_15Min"
+        output_file = os.path.join(output_path, f"{filename}_preprocessed.csv")
+        
         df.to_csv(output_file, index=False)
         
         # 5. Open and append the scale factor to a text file
-        scale_factor_file = f"{output_path}/scale_factor.txt"
+        scale_factor_file = os.path.join(output_path, "scale_factor.txt")
         with open(scale_factor_file, 'a') as f:
             f.write(f"{filename}: {FINAL_SCALE_FACTOR:.2f}\n")
             
