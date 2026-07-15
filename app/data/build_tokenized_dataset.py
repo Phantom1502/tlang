@@ -67,7 +67,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--max_length", type=int, default=512, help="Khớp MAX_POSITION_EMBEDDINGS")
     p.add_argument("--num_proc", type=int, default=4)
     p.add_argument(
-        "--batch_size", type=int, default=1000,
+        "--batch_size", type=int, default=4000,
         help="Số example/batch cho .map(batched=True) — batch lớn hơn giảm overhead gọi tokenizer, "
              "nhưng tốn RAM hơn mỗi worker. 1000 là điểm khởi đầu hợp lý cho seq_len ~230 token/sample.",
     )
