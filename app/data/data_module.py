@@ -24,7 +24,7 @@ from typing import Any, Dict, Literal, Optional
 
 from transformers import PreTrainedTokenizerBase
 
-from data.collator import (
+from app.data.collator import (
     LABEL_PAD_ID,
     DataCollatorForCoT,
     DataCollatorForPreTokenizedCoT,
