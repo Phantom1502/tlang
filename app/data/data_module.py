@@ -134,7 +134,7 @@ def make_data_module(
     # ------------------------------------------------------------
     from datasets import load_dataset
 
-    raw = load_dataset(data_args.dataset_name)
+    raw = load_dataset(data_args.dataset_name, name="ids", split="train")
     train_raw = raw["train"] if hasattr(raw, "keys") else raw
 
     eval_raw = None
