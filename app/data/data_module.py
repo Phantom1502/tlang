@@ -29,7 +29,7 @@ class DataArguments:
     #   không đọc config "default"/"raw" — tương thích ngược với script cũ).
     dataset_mode: Literal["auto", "on_the_fly", "pre_tokenized"] = "auto"
     eval_dataset_name: Optional[str] = None
-    eval_split: str = "validation"   # tên split eval TRONG CÙNG repo (ids/val.parquet, raw/val.parquet)
+    eval_split: str = "val"   # tên split eval TRONG CÙNG repo (ids/val.parquet, raw/val.parquet)
     num_proc: int = 4
     max_length: int = 512
 
