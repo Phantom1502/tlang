@@ -7,7 +7,7 @@ set -euo pipefail
 python -m app.train.train_pretrain \
     --org "sullivan1502" \
     --model_size tiny \
-    --dataset_name "sullivan1502/tlang-pretrain-ids" \
+    --dataset_name "sullivan1502/tlang-pretrain" \
     --output_dir "./output/tiny_pretrain" \
     \
     --dataset_mode pre_tokenized \
