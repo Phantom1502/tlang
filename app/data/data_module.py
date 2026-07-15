@@ -1,26 +1,8 @@
-"""
-app/data/data_module.py — make_data_module (train_pipeline_v0.1.md mục 3.3)
-
-Load dataset Pretrain/SFT từ Hub (schema mục 7.2 spec: {"prompt","completion"})
-và chuẩn bị train_dataset/eval_dataset/data_collator theo toggle
-`dataset_mode`:
-
-- "on_the_fly" (mặc định): giữ nguyên raw text, tokenize+mask ngay trong
-  DataCollatorForCoT mỗi batch — không .map() lưu ra (mục 3.3 spec).
-- "pre_tokenized": .map() một lần ra input_ids/labels, cache Arrow local
-  — bật khi on-the-fly là bottleneck thật. Theo tokenizer_v0.1.md mục 5.2,
-  nên cân nhắc bật SỚM cho pretrain/SFT ở scale ~10B token vì 2 dataset
-  này KHÔNG đổi qua các round (khác GRPO, phải encode runtime vì
-  completion do model tự sinh lúc train).
-
-KHÔNG dùng cho GRPO — dataset GRPO chỉ có "prompt" (mục 7.3 spec), không
-có "completion" để mask loss kiểu này; GRPOTrainer tự lo sinh/reward,
-không đi qua make_data_module/DataCollatorForCoT.
-"""
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Dict, Literal, Optional, Tuple
 
 from transformers import PreTrainedTokenizerBase
 
@@ -30,24 +12,31 @@ from app.data.collator import (
     DataCollatorForPreTokenizedCoT,
 )
 
+logger = logging.getLogger("app.data.data_module")
+
 
 @dataclass
 class DataArguments:
-    """CLI-configurable — KHÔNG hard-code dataset_mode trong script train."""
-
-    dataset_name: str                                    # vd "<org>/trading-llm-pretrain" | "...-sft"
-    dataset_mode: Literal["on_the_fly", "pre_tokenized"] = "on_the_fly"
-    eval_dataset_name: Optional[str] = None               # None = không có eval split riêng
-    num_proc: int = 4                                     # chỉ dùng khi dataset_mode="pre_tokenized" (.map())
-    max_length: int = 512                                 # khớp MAX_POSITION_EMBEDDINGS (app/model/model_configs.py)
+    dataset_name: str
+    # "auto" (mặc định — MỚI): thử load config "default" (ids/, đã tokenize
+    #   sẵn input_ids/labels) trước; nếu repo chưa có config này (vd repo cũ,
+    #   hoặc lỗi mạng) -> tự fallback config "raw" (text thô, tokenize
+    #   on-the-fly). Đây là fallback THẬT (code tự thử/catch), không phải
+    #   README tự làm được — README chỉ khai báo config nào default cho
+    #   `load_dataset(repo)` KHÔNG chỉ định tên config, không có ý nghĩa
+    #   "nếu thiếu thì tự chuyển sang config khác".
+    # "on_the_fly" / "pre_tokenized": giữ lại để CHỈ ĐỊNH TAY (không auto,
+    #   không đọc config "default"/"raw" — tương thích ngược với script cũ).
+    dataset_mode: Literal["auto", "on_the_fly", "pre_tokenized"] = "auto"
+    eval_dataset_name: Optional[str] = None
+    eval_split: str = "validation"   # tên split eval TRONG CÙNG repo (ids/val.parquet, raw/val.parquet)
+    num_proc: int = 4
+    max_length: int = 512
 
 
 def _tokenize_and_mask_example(
     example: Dict[str, Any], tokenizer: PreTrainedTokenizerBase, max_length: int
 ) -> Dict[str, Any]:
-    """Dùng cho .map() ở dataset_mode="pre_tokenized" — CÙNG rule mask
-    (<bos>+prompt -> -100) với DataCollatorForCoT.__call__, tách riêng để
-    2 nơi không lệch nhau (1 nguồn sự thật duy nhất cho rule mask)."""
     prompt, completion = example["prompt"], example["completion"]
 
     prompt_ids = tokenizer(prompt, add_special_tokens=False)["input_ids"]
@@ -62,23 +51,89 @@ def _tokenize_and_mask_example(
     return {"input_ids": full_ids, "labels": labels}
 
 
+# =====================================================================
+# Fallback loader THẬT — resolve_dataset_with_fallback().
+#
+# Cấu trúc repo (xem app/data/publish_dataset.py):
+#     ids/train.parquet, ids/val.parquet      -> config "default" (đã tokenize)
+#     raw/train.parquet, raw/val.parquet      -> config "raw" (text thô)
+#
+# Quyết định fallback là TOÀN BỘ (all-or-nothing): nếu load config
+# "default" thất bại ở bước train split, dùng "raw" cho CẢ train lẫn eval
+# — không trộn train=tokenized + eval=raw (tránh lệch collator giữa 2 tập).
+# =====================================================================
+def resolve_dataset_with_fallback(
+    dataset_name: str,
+    eval_split: str = "validation",
+) -> Tuple[Any, Optional[Any], bool]:
+    """Trả về (train_dataset, eval_dataset_hoặc_None, is_pretokenized)."""
+    from datasets import load_dataset
+
+    def _try(config_name: str):
+        train = load_dataset(dataset_name, name=config_name, split="train")
+        try:
+            eval_ds = load_dataset(dataset_name, name=config_name, split=eval_split)
+        except Exception:
+            eval_ds = None
+        return train, eval_ds
+
+    try:
+        train_ds, eval_ds = _try("default")
+        logger.info(f"[{dataset_name}] Load config 'default' (ids/, đã tokenize) OK -> dataset_mode=pre_tokenized (auto).")
+        return train_ds, eval_ds, True
+    except Exception as e:
+        logger.warning(
+            f"[{dataset_name}] Không load được config 'default' (ids/): {e}\n"
+            f"-> Fallback config 'raw' (text thô) -> dataset_mode=on_the_fly (auto)."
+        )
+        train_ds, eval_ds = _try("raw")
+        return train_ds, eval_ds, False
+
+
 def make_data_module(
     tokenizer: PreTrainedTokenizerBase,
     data_args: DataArguments,
     is_pretrain: bool,
 ) -> Dict[str, Any]:
-    """
-    Trả về dict truyền thẳng vào `Trainer(**make_data_module(...))`:
-        {"train_dataset": ..., "eval_dataset": ... | None, "data_collator": ...}
-
-    `is_pretrain` hiện chỉ dùng để log rõ đang chuẩn bị data cho pretrain
-    hay SFT — 2 nhánh dùng chung schema/logic (mục 7.2 spec: "SFT dùng
-    cùng schema prompt/completion, chỉ khác nguồn random-gen"). Để sẵn
-    tham số này phòng khi sau cần rẽ nhánh xử lý khác nhau.
-    """
-    from datasets import load_dataset  # import trễ — tránh ép cài `datasets` cho script không cần data
-
     stage = "pretrain" if is_pretrain else "sft"
+
+    # ------------------------------------------------------------
+    # Nhánh MỚI (mặc định) — auto-fallback default(ids) -> raw thật.
+    # ------------------------------------------------------------
+    if data_args.dataset_mode == "auto":
+        train_raw, eval_raw, is_pretokenized = resolve_dataset_with_fallback(
+            data_args.dataset_name, eval_split=data_args.eval_split,
+        )
+
+        # eval_dataset_name RIÊNG (khác repo hẳn) -> override, đọc đúng
+        # config tương ứng (default nếu train đang pretokenized, raw nếu không)
+        # để đồng nhất loại collator giữa train/eval.
+        if data_args.eval_dataset_name is not None:
+            from datasets import load_dataset
+            config_name = "default" if is_pretokenized else "raw"
+            eval_raw = load_dataset(data_args.eval_dataset_name, name=config_name, split="train")
+
+        if is_pretokenized:
+            print(f"[make_data_module:{stage}] dataset_mode=auto -> pre_tokenized (config 'default')")
+            return {
+                "train_dataset": train_raw,
+                "eval_dataset": eval_raw,
+                "data_collator": DataCollatorForPreTokenizedCoT(tokenizer=tokenizer),
+            }
+        else:
+            print(f"[make_data_module:{stage}] dataset_mode=auto -> on_the_fly (config 'raw', fallback)")
+            return {
+                "train_dataset": train_raw,
+                "eval_dataset": eval_raw,
+                "data_collator": DataCollatorForCoT(tokenizer=tokenizer, max_length=data_args.max_length),
+            }
+
+    # ------------------------------------------------------------
+    # Nhánh CŨ — chỉ định tay, không đọc config "default"/"raw", giữ lại
+    # để tương thích ngược (vd dataset chưa tổ chức theo 2-config này).
+    # ------------------------------------------------------------
+    from datasets import load_dataset
+
     raw = load_dataset(data_args.dataset_name)
     train_raw = raw["train"] if hasattr(raw, "keys") else raw
 
@@ -118,6 +173,4 @@ def make_data_module(
             "data_collator": DataCollatorForPreTokenizedCoT(tokenizer=tokenizer),
         }
 
-    raise ValueError(
-        f"dataset_mode không hợp lệ: {data_args.dataset_mode!r} (chỉ chấp nhận on_the_fly|pre_tokenized)"
-    )
+    raise ValueError(f"dataset_mode không hợp lệ: {data_args.dataset_mode!r}")
