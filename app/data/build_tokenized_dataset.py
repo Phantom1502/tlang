@@ -52,7 +52,15 @@ LABEL_PAD_ID = -100
 
 def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--repo_id", required=True, help="Repo dataset trên Hub (chứa cả subset 'raw' và 'ids')")
+    p.add_argument("--repo_id", required=True, help="Repo dataset trên Hub chứa subset 'raw' (nguồn đọc)")
+    p.add_argument(
+        "--ids_repo_id", default=None,
+        help="Repo đích để push subset 'ids' (tokenized). Mặc định = --repo_id (giữ hành vi cũ, "
+             "push chung 1 repo). Khuyến nghị truyền 1 repo KHÁC (vd '<org>/tlang-pretrain-ids') "
+             "— vì mỗi lần push vào CÙNG repo với 'raw' sẽ tạo commit mới, đổi git revision của "
+             "cả repo, khiến local cache của 'raw' (khoá theo revision) bị coi là stale ở lần "
+             "load kế tiếp và phải build lại Arrow cache từ đầu, kể cả split không liên quan.",
+    )
     p.add_argument("--kind", choices=["pretrain_sft", "grpo"], required=True)
     p.add_argument("--split", default=None, help="Chỉ định split cụ thể để xử lý (vd: train, val). Nếu để None sẽ chạy tất cả.")
     p.add_argument("--tokenizer_repo", default=None, help="Mặc định DEFAULT_TOKENIZER_REPO trong app/tokenizer/hub.py")
@@ -297,6 +305,15 @@ def _verify_grpo_split(raw_split, mapped_split, tokenizer, n_samples: int, seed:
 
 def main() -> None:
     args = build_arg_parser().parse_args()
+    ids_repo_id = args.ids_repo_id or args.repo_id
+
+    if ids_repo_id == args.repo_id:
+        logger.warning(
+            "[CACHE] --ids_repo_id không được truyền — đang push 'ids' CHUNG repo với 'raw' "
+            f"({args.repo_id!r}). Mỗi lần push sẽ tạo commit mới trên repo này, có thể khiến lần "
+            "load 'raw' kế tiếp bị cache-miss và phải build lại Arrow cache từ đầu. Khuyến nghị "
+            "truyền --ids_repo_id trỏ 1 repo khác để tránh việc này."
+        )
 
     from app.tokenizer.hub import load_tokenizer
     tok = load_tokenizer(repo_id=args.tokenizer_repo, allow_local_fallback=False)
@@ -399,8 +416,8 @@ def main() -> None:
         logger.info("[DRY RUN] Verify xong, không push lên Hub.")
         return
 
-    mapped.push_to_hub(args.repo_id, config_name="ids", private=args.private)
-    logger.info(f"Đã cập nhật thành công dữ liệu tokenize lên subset 'ids' của repo: {args.repo_id}")
+    mapped.push_to_hub(ids_repo_id, config_name="ids", private=args.private)
+    logger.info(f"Đã cập nhật thành công dữ liệu tokenize lên subset 'ids' của repo: {ids_repo_id}")
 
 
 if __name__ == "__main__":
