@@ -115,7 +115,8 @@ def make_data_module(
     if data_args.dataset_mode == "on_the_fly":
         print(f"[make_data_module:{stage}] dataset_mode=on_the_fly, repo={data_args.dataset_name}")
         dataset = load_dataset(data_args.dataset_name, streaming=True)
-        train_dataset = dataset[data_args.train_split].shuffle(seed=42, buffer_size=10_000)
+        #train_dataset = dataset[data_args.train_split].shuffle(seed=42, buffer_size=10_000)
+        train_dataset = dataset[data_args.train_split]
         return {
             "train_dataset": train_dataset,
             "eval_dataset": dataset[data_args.eval_split],
@@ -132,7 +133,8 @@ def make_data_module(
         # đúng repo "ids", không phải repo "raw".
         print(f"[make_data_module:{stage}] dataset_mode=pre_tokenized, repo={data_args.dataset_name}")
         dataset = load_dataset(data_args.dataset_name, streaming=True)
-        train_dataset = dataset[data_args.train_split].shuffle(seed=42, buffer_size=10_000)
+        #train_dataset = dataset[data_args.train_split].shuffle(seed=42, buffer_size=10_000)
+        train_dataset = dataset[data_args.train_split]
         return {
             "train_dataset": train_dataset,
             "eval_dataset": dataset[data_args.eval_split],
