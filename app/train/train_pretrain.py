@@ -10,20 +10,12 @@ logging.basicConfig(level=logging.INFO, format="[%(name)s] %(message)s")
 def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 
-    p.add_argument("--org", required=True)
     p.add_argument("--model_size", choices=["tiny", "small", "base", "large"], default="tiny")
-    p.add_argument("--tokenizer_repo", default=None)
 
-    p.add_argument("--dataset_name", required=True, help="vd <org>/tlang-pretrain")
-    p.add_argument("--eval_dataset_name", default=None)
-    p.add_argument("--eval_split", default="validation", help="Tên split eval TRONG CÙNG repo (ids/val.parquet, raw/val.parquet)")
-    p.add_argument(
-        "--dataset_mode", choices=["auto", "on_the_fly", "pre_tokenized"], default="auto",
-        help="'auto' (mặc định, MỚI): tự thử config 'default' (ids/, đã tokenize) trước, "
-             "fallback config 'raw' nếu chưa có. 2 giá trị còn lại là chỉ định tay, không auto.",
-    )
-    p.add_argument("--num_proc", type=int, default=4)
-    p.add_argument("--max_length", type=int, default=512)
+    p.add_argument("--dataset_name", required=True, help="sullivan1502/tlang-pretrain-ids for pretokenized")
+    p.add_argument("--dataset_mode", choices=["on_the_fly", "pre_tokenized"], default="pre_tokenized")
+    p.add_argument("--max_length", type=int, default=512, help="khớp MAX_POSITION_EMBEDDINGS")
+
 
     p.add_argument("--output_dir", required=True)
     p.add_argument("--per_device_train_batch_size", type=int, default=16)
@@ -36,8 +28,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     p.add_argument("--save_steps", type=int, default=500)
     p.add_argument("--save_total_limit", type=int, default=2)
-    p.add_argument("--push_to_hub", dest="push_to_hub", action="store_true", default=True)
-    p.add_argument("--no_push_to_hub", dest="push_to_hub", action="store_false")
+    p.add_argument("--hf_token", default=None, help="HF Token")
+    p.add_argument("--repo_id", default=None, help="Model Repo ID on HF Hub")
 
     p.add_argument("--fp16", dest="fp16", action="store_true", default=True)
     p.add_argument("--bf16", dest="fp16", action="store_false")
@@ -64,24 +56,41 @@ def main() -> None:
 
     from transformers import Trainer, TrainingArguments
 
-    from app.data.data_module import DataArguments, make_data_module
+    from app.model.data_module import DataArguments, make_data_module
     from app.tokenizer.hub import load_tokenizer
     from app.train.common import resolve_resume_checkpoint
+    
+    import os
+    import torch
+    
+    os.makedirs(args.output_dir, exist_ok=True)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"Device: {device}")
+    if device == "cuda":
+        print(f"GPU : {torch.cuda.get_device_name(0)}")
+        print(f"VRAM: {torch.cuda.get_device_properties(0).total_memory/1e9:.1f}GB")
+        
+    push_to_hub = False
+    if args.hf_token:
+        from huggingface_hub import login
+        login(token=args.hf_token)
+        if args.repo_id:
+            push_to_hub = True
+    elif args.repo_id:
+        print("Có repo_id nhưng chưa có hf_token — nhớ gọi huggingface_hub.login() thủ công trước khi chạy.")
 
-    checkpoint_repo = f"{args.org}/trading-llm-{args.model_size}-pretrain"
-
-    tok = load_tokenizer(repo_id=args.tokenizer_repo, allow_local_fallback=False)
+    # ------------------------------------------------------------
+    # Tokenizer — luôn load qua Hub (app/tokenizer/hub.py), KHÔNG build lại
+    # ------------------------------------------------------------
+    tok = load_tokenizer(repo_id=args.repo_id, allow_local_fallback=False)
     logger.info(f"tokenizer vocab_size = {tok.vocab_size}")
 
-    resume_checkpoint = resolve_resume_checkpoint(args.output_dir, checkpoint_repo, args.push_to_hub)
+    resume_checkpoint = resolve_resume_checkpoint(args.output_dir, args.repo_id)
     model = build_model_for_resume_or_scratch(resume_checkpoint, args.model_size, tok.vocab_size)
 
     data_args = DataArguments(
         dataset_name=args.dataset_name,
         dataset_mode=args.dataset_mode,
-        eval_dataset_name=args.eval_dataset_name,
-        eval_split=args.eval_split,
-        num_proc=args.num_proc,
         max_length=args.max_length,
     )
     data_module = make_data_module(tok, data_args, is_pretrain=True)
@@ -99,13 +108,13 @@ def main() -> None:
         fp16=args.fp16,
         bf16=not args.fp16,
         push_to_hub=args.push_to_hub,
-        hub_model_id=checkpoint_repo if args.push_to_hub else None,
-        hub_strategy="checkpoint" if args.push_to_hub else "every_save",
+        hub_model_id=args.repo_id,
+        hub_strategy="checkpoint" if push_to_hub else "every_save",
         save_strategy="steps",
         save_steps=args.save_steps,
         save_total_limit=args.save_total_limit,
-        eval_strategy="steps" if data_module.get("eval_dataset") is not None else "no",
-        eval_steps=args.save_steps if data_module.get("eval_dataset") is not None else None,
+        eval_strategy="steps",
+        eval_steps=args.save_steps,
         report_to=[],
     )
 
@@ -116,7 +125,7 @@ def main() -> None:
     tok.save_pretrained(args.output_dir)
     if args.push_to_hub:
         trainer.push_to_hub(commit_message="Final pretrain checkpoint")
-        logger.info(f"Đã push bản final lên: https://huggingface.co/{checkpoint_repo}")
+        logger.info(f"Đã push bản final lên: https://huggingface.co/{args.repo_id}")
     else:
         logger.info(f"push_to_hub tắt — checkpoint final chỉ lưu local tại {args.output_dir}")
 

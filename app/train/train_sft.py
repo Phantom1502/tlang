@@ -50,6 +50,10 @@ import logging
 logger = logging.getLogger("train_sft")
 logging.basicConfig(level=logging.INFO, format="[%(name)s] %(message)s")
 
+from app.model.config import (
+    DataArguments,
+    TrainArguments,
+)
 
 def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -60,10 +64,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--pretrain_repo", default=None,
         help="Override nguồn checkpoint pretrain — mặc định suy ra <org>/trading-llm-<size>-pretrain",
-    )
-    p.add_argument(
-        "--tokenizer_repo", default=None,
-        help="Repo tokenizer trên Hub — mặc định dùng DEFAULT_TOKENIZER_REPO trong app/tokenizer/hub.py",
     )
 
     # --- Dataset (mục 3, mục 7.2) ---
@@ -84,15 +84,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     # --- Push theo chu kỳ (mục 4.2, áp dụng lại cho SFT theo mục 5.1) ---
     p.add_argument("--save_steps", type=int, default=500)
     p.add_argument("--save_total_limit", type=int, default=2)
-    p.add_argument(
-        "--push_to_hub", dest="push_to_hub", action="store_true", default=True,
-        help="Mặc định BẬT — đúng thiết kế mục 4.2 (push theo chu kỳ, không chỉ lúc kết thúc)",
-    )
-    p.add_argument(
-        "--no_push_to_hub", dest="push_to_hub", action="store_false",
-        help="Tắt push kết quả SFT — CHỈ dùng cho dev/test cục bộ. Vẫn cần pretrain_repo tồn tại trên "
-             "Hub để load nguồn init (xem docstring module).",
-    )
+    p.add_argument("--hf_token", default=None, help="HF Token")
+    p.add_argument("--repo_id", default=None, help="Model Repo ID on HF Hub")
 
     # --- Hạ tầng (mục 7) ---
     p.add_argument("--fp16", dest="fp16", action="store_true", default=True, help="Mặc định BẬT — T4 không có bf16 tensor core tốt")
@@ -142,7 +135,37 @@ def main() -> None:
     from app.model.data_module import DataArguments, make_data_module
     from app.tokenizer.hub import load_tokenizer
     from app.train.common import resolve_resume_checkpoint
-
+    import os
+    import torch
+    
+    os.makedirs(args.output_dir, exist_ok=True)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"Device: {device}")
+    if device == "cuda":
+        print(f"GPU : {torch.cuda.get_device_name(0)}")
+        print(f"VRAM: {torch.cuda.get_device_properties(0).total_memory/1e9:.1f}GB")
+        
+    if args.hf_token:
+        from huggingface_hub import login
+        login(token=args.hf_token)
+    elif args.repo_id:
+        print("Có repo_id nhưng chưa có hf_token — nhớ gọi huggingface_hub.login() thủ công trước khi chạy.")
+       
+    # ------------------------------------------------------------
+    # Tokenizer — luôn load qua Hub (app/tokenizer/hub.py), KHÔNG build lagi
+    # từ source ở script train (mục 7.0 docs/tokenizer_v0.1.md).
+    # ------------------------------------------------------------
+    tok = load_tokenizer(repo_id=args.repo_id, allow_local_fallback=False)
+    logger.info(f"tokenizer vocab_size = {tok.vocab_size}")
+    
+    # ------------------------------------------------------------
+    # Resume checkpoint CỦA CHÍNH SFT (mục 5.1) — tìm TRƯỚC khi khởi tạo
+    # Trainer. Nếu None, model sẽ init từ pretrain_repo (không phải
+    # from-scratch — điểm khác biệt duy nhất so với train_pretrain.py).
+    # ------------------------------------------------------------
+    resume_checkpoint = resolve_resume_checkpoint(args.output_dir, args.repo_id)
+    model = build_model_for_resume_or_from_pretrain(resume_checkpoint, pretrain_repo, tok.vocab_size)
+        
     sft_repo = f"{args.org}/trading-llm-{args.model_size}-sft"
     pretrain_repo = args.pretrain_repo or f"{args.org}/trading-llm-{args.model_size}-pretrain"
 

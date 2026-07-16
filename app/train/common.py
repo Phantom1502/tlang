@@ -19,7 +19,7 @@ HUB_CHECKPOINT_SUBFOLDER = "last-checkpoint"  # thư mục con mà hub_strategy=
 
 
 def resolve_resume_checkpoint(
-    output_dir: str, checkpoint_repo: str, push_to_hub: bool
+    output_dir: str, checkpoint_repo: str
 ) -> Optional[str]:
     """
     Tìm 1 checkpoint ĐẦY ĐỦ (weights + optimizer + scheduler + rng_state)
@@ -43,10 +43,6 @@ def resolve_resume_checkpoint(
     if local_checkpoint is not None:
         logger.info(f"Tìm thấy local checkpoint: {local_checkpoint} — resume optimizer/scheduler/rng tại chỗ")
         return local_checkpoint
-
-    if not push_to_hub:
-        logger.info("Không có local checkpoint, push_to_hub tắt -> không có nguồn nào khác để resume")
-        return None
 
     from huggingface_hub import repo_exists, snapshot_download
 
