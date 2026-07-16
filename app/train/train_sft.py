@@ -67,10 +67,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
 
     # --- Dataset (mục 3, mục 7.2) ---
-    p.add_argument("--dataset_name", required=True, help="vd <org>/trading-llm-sft")
-    p.add_argument("--eval_dataset_name", default=None)
-    p.add_argument("--dataset_mode", choices=["on_the_fly", "pre_tokenized"], default="on_the_fly")
-    p.add_argument("--num_proc", type=int, default=4, help="chỉ dùng khi dataset_mode=pre_tokenized")
+    p.add_argument("--dataset_name", required=True, help="sullivan1502/tlang-pretrain-ids for pretokenized")
+    p.add_argument("--dataset_mode", choices=["on_the_fly", "pre_tokenized"], default="pre_tokenized")
     p.add_argument("--max_length", type=int, default=512, help="khớp MAX_POSITION_EMBEDDINGS")
 
     # --- Training loop ---
@@ -141,7 +139,7 @@ def main() -> None:
 
     from transformers import Trainer, TrainingArguments
 
-    from app.data.data_module import DataArguments, make_data_module
+    from app.model.data_module import DataArguments, make_data_module
     from app.tokenizer.hub import load_tokenizer
     from app.train.common import resolve_resume_checkpoint
 

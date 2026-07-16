@@ -10,5 +10,4 @@ class DataArguments:
     train_split: str = "train"
     eval_split: str = "val"
     
-    num_proc: int = 4
     max_length: int = 512
