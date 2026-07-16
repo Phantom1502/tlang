@@ -16,9 +16,9 @@ python -m app.train.train_pretrain \
     --warmup_ratio 0.03 \
     --max_steps 7000 \
     --num_train_epochs 1 \
-    --logging_steps 10 \
+    --logging_steps 5 \
     \
-    --save_steps 100 \
+    --save_steps 20 \
     --save_total_limit 2 \
     --repo_id "sullivan1502/base-pretrain" \
     \
