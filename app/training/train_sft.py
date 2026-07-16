@@ -216,7 +216,7 @@ def main() -> None:
     # ------------------------------------------------------------
     trainer.save_model()
     tok.save_pretrained(args.output_dir)
-    if args.push_to_hub:
+    if push_to_hub:
         trainer.push_to_hub(commit_message="Final SFT checkpoint")
         logger.info(f"Đã push bản final lên: https://huggingface.co/{args.repo_id}")
     else:

@@ -7,7 +7,7 @@ import torch
 from datasets import load_dataset
 from transformers import PreTrainedTokenizerBase
 
-from app.model.config import DataArguments
+from app.training.data.arguments import DataArguments
 
 LABEL_PAD_ID = -100
 
