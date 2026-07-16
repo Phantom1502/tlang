@@ -13,7 +13,7 @@ set -euo pipefail
 #   ETA thực đo                 = ~25.6s/it * 7000 ≈ 49.7h (khớp num_train_epochs=1)
 
 
-python -m app.train.train_pretrain \
+python -m app.training.train_pretrain \
     --model_size base \
     --dataset_name "sullivan1502/tlang-pretrain-ids" \
     --dataset_mode pre_tokenized \
