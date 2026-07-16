@@ -1,0 +1,7 @@
+1. hf auth login
+# Khởi tạo repo và up tokenizer
+2. python -m app.tokenizer.push_to_hub --repo_id sullivan1502/tiny-pretrain
+
+# Pretrain
+%env HF_TOKEN=xxx
+!bash /content/tlang/tiny_pretrain.sh

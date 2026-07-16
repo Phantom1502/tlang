@@ -20,6 +20,6 @@ python -m app.train.train_pretrain \
     \
     --save_steps 100 \
     --save_total_limit 2 \
-    --repo_id "sullivan1502/tiny-pretrain" \
+    --repo_id "sullivan1502/base-pretrain" \
     \
     --fp16 \
