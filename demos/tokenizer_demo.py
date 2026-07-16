@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import random
 
-from app.gen.generator import generate_dataset
+from app.data_prepare.generator import generate_dataset
 from app.lang.parser import Parser
 from app.tokenizer.hub import load_tokenizer
 

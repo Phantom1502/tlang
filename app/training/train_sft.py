@@ -100,7 +100,7 @@ def build_model_for_resume_or_from_pretrain(resume_checkpoint, pretrain_repo: st
     thầm init from scratch (SFT KHÔNG có nhánh from-scratch — khác
     pretrain).
     """
-    from app.train.common import load_model_with_vocab_check
+    from app.training.common import load_model_with_vocab_check
 
     if resume_checkpoint is not None:
         return load_model_with_vocab_check(resume_checkpoint, vocab_size)
@@ -123,9 +123,9 @@ def main() -> None:
 
     from transformers import Trainer, TrainingArguments
 
-    from app.model.data_module import DataArguments, make_data_module
+    from app.training.data.data_module import DataArguments, make_data_module
     from app.tokenizer.hub import load_tokenizer
-    from app.train.common import resolve_resume_checkpoint
+    from app.training.common import resolve_resume_checkpoint
     import os
     import torch
     

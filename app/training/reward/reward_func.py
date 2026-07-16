@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from app.lang.parser import Parser
 from app.lang.semantic import SemanticChecker
-from app.reward.forward_test import FutureCandle, evaluate_outcome
+from app.training.reward.forward_test import FutureCandle, evaluate_outcome
 
 # =====================================================================
 # Trọng số giữa 3 nhóm (well-form / semantic / outcome) — PLACEHOLDER.

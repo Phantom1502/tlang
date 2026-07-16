@@ -6,7 +6,7 @@ Test trực tiếp trên các hàm thuần túy (không cần qua Lexer/Parser) 
 input ở đây chỉ là bin số nguyên + future_candles giả lập.
 """
 from app.lang.ast_nodes import ZoneNode
-from app.reward.forward_test import (
+from app.training.reward.forward_test import (
     OutcomeStatus,
     derive_target,
     forward_test,

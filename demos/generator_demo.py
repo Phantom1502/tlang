@@ -10,10 +10,10 @@ Kiểm chứng 2 việc quan trọng nhất:
 import random
 from collections import Counter
 
-from app.gen.generator import LEAF_RECIPES, generate_dataset
+from app.data_prepare.generator import LEAF_RECIPES, generate_dataset
 from app.lang.parser import Parser
 from app.lang.semantic import SemanticChecker
-from app.reward.forward_test import evaluate_outcome
+from app.training.reward.forward_test import evaluate_outcome
 
 
 def make_synthetic_chart(rng: random.Random, n: int = 50, base: int = 500, spread: int = 30):

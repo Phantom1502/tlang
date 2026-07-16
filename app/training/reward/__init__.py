@@ -1,4 +1,4 @@
-from app.reward.forward_test import (
+from app.training.reward.forward_test import (
     OutcomeStatus,
     ForwardTestResult,
     is_sl_valid,
@@ -12,7 +12,7 @@ from app.reward.forward_test import (
     BIN_MAX,
     HORIZON,
 )
-from app.reward.reward_func import (
+from app.training.reward.reward_func import (
     R_WF_FULL,
     R_SEM_FULL,
     EXTRA_SEMANTIC_PENALTY,

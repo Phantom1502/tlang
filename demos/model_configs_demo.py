@@ -18,7 +18,7 @@ Kiểm tra:
 """
 from __future__ import annotations
 
-from app.model.model_configs import (
+from app.training.model.configs import (
     MAX_POSITION_EMBEDDINGS,
     MODEL_PRESETS,
     ModelArgs,

@@ -26,8 +26,8 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 import pandas as pd
 
-from app.gen.generator import generate_dataset
-from app.preprocess.chartcodec import ChartCodec
+from app.data_prepare.generator import generate_dataset
+from app.data_prepare.chartcodec import ChartCodec
 
 Candle = Tuple[int, int, int, int]   # (o, h, l, c)
 

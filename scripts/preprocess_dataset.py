@@ -1,4 +1,4 @@
-from app.preprocess.preprocess import Preprocess
+from app.data_prepare.preprocess import Preprocess
 import glob
 
 def preprocess_data(csv_folder, output_folder, period=100):

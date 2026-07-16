@@ -8,7 +8,7 @@ from app.lang.ast_nodes import ActionNode, ThinkNode, ZoneNode
 from app.lang.parser import Parser
 from app.lang.semantic import SemanticChecker
 from app.lang.tokens import BIN_MAX, BIN_MIN, DIGIT_PAD, RR_MAX, RR_MIN
-from app.reward.forward_test import SL_MAX_DIST_BINS, SL_MIN_DIST_BINS, derive_target, evaluate_outcome
+from app.training.reward.forward_test import SL_MAX_DIST_BINS, SL_MIN_DIST_BINS, derive_target, evaluate_outcome
 
 Candle = Tuple[int, int, int, int]   # (o, h, l, c)
 

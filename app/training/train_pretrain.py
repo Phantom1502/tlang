@@ -40,8 +40,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def build_model_for_resume_or_scratch(resume_checkpoint, model_size: str, vocab_size: int):
     from transformers import LlamaForCausalLM
 
-    from app.model.model_configs import build_llama_config
-    from app.train.common import load_model_with_vocab_check
+    from app.training.model.configs import build_llama_config
+    from app.training.common import load_model_with_vocab_check
 
     if resume_checkpoint is not None:
         return load_model_with_vocab_check(resume_checkpoint, vocab_size)
@@ -56,9 +56,9 @@ def main() -> None:
 
     from transformers import Trainer, TrainingArguments
 
-    from app.model.data_module import DataArguments, make_data_module
+    from app.training.data.data_module import DataArguments, make_data_module
     from app.tokenizer.hub import load_tokenizer
-    from app.train.common import resolve_resume_checkpoint
+    from app.training.common import resolve_resume_checkpoint
     
     import os
     import torch

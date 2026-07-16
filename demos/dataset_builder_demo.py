@@ -14,7 +14,7 @@ import random
 import numpy as np
 import pandas as pd
 
-from app.gen.dataset_builder import build_grpo_parquet, build_pretrain_sft_parquet, load_scale_factors
+from app.data_prepare.dataset_builder import build_grpo_parquet, build_pretrain_sft_parquet, load_scale_factors
 from app.lang.parser import Parser
 
 

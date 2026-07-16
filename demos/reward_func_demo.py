@@ -4,7 +4,7 @@ Demo nhanh cho unified_reward_func — chạy: python -m app.reward.reward_func_
 Test cả 3 gate (well-form fail / semantic fail / outcome), cơ chế
 weight_table theo trend+action, và StatsCollector.print_summary().
 """
-from app.reward.reward_func import (
+from app.training.reward.reward_func import (
     R_SEM_FULL,
     R_WF_FULL,
     StatsCollector,

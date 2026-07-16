@@ -1,4 +1,4 @@
-from app.gen.dataset_builder import (
+from app.data_prepare.dataset_builder import (
     build_grpo_parquet,
     build_grpo_rows,
     build_pretrain_sft_parquet,
@@ -8,7 +8,7 @@ from app.gen.dataset_builder import (
     parse_window_text,
     render_chart_block,
 )
-from app.gen.generator import (
+from app.data_prepare.generator import (
     LEAF_RECIPES,
     ZONE_WIDTH_MIN_BINS,
     ZONE_WIDTH_MAX_BINS,
