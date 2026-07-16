@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 from typing import Any, Dict, Literal, Optional, Tuple
-from transformers import TrainingArguments
 
 @dataclass
 class DataArguments:
@@ -11,9 +10,3 @@ class DataArguments:
     eval_split: str = "val"
     
     max_length: int = 512
-    
-@dataclass
-class HubConfig:
-    """Cấu hình huggingface_hub."""
-    repo_id : Optional[str] = None
-    hf_token: Optional[str] = None
