@@ -21,5 +21,6 @@ python -m app.train.train_pretrain \
     --save_steps 50 \
     --save_total_limit 2 \
     --repo_id "sullivan1502/base-pretrain" \
+    --hf_token "$HF_TOKEN" \
     \
     --fp16 \
