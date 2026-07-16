@@ -50,21 +50,12 @@ import logging
 logger = logging.getLogger("train_sft")
 logging.basicConfig(level=logging.INFO, format="[%(name)s] %(message)s")
 
-from app.model.config import (
-    DataArguments,
-    TrainArguments,
-)
-
 def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 
     # --- Model / checkpoint naming (mục 1.2, mục 5.1) ---
-    p.add_argument("--org", required=True, help="HF org/username — dùng để đặt tên sft_repo VÀ suy ra pretrain_repo")
     p.add_argument("--model_size", choices=["tiny", "small", "base", "large"], default="tiny")
-    p.add_argument(
-        "--pretrain_repo", default=None,
-        help="Override nguồn checkpoint pretrain — mặc định suy ra <org>/trading-llm-<size>-pretrain",
-    )
+    p.add_argument("--pretrain_repo", default=None, help="Pretrain repo để train sft, cần có để init sft",)
 
     # --- Dataset (mục 3, mục 7.2) ---
     p.add_argument("--dataset_name", required=True, help="sullivan1502/tlang-pretrain-ids for pretokenized")
@@ -145,12 +136,18 @@ def main() -> None:
         print(f"GPU : {torch.cuda.get_device_name(0)}")
         print(f"VRAM: {torch.cuda.get_device_properties(0).total_memory/1e9:.1f}GB")
         
+    push_to_hub = False
     if args.hf_token:
         from huggingface_hub import login
         login(token=args.hf_token)
+        if args.repo_id:
+            push_to_hub = True
     elif args.repo_id:
         print("Có repo_id nhưng chưa có hf_token — nhớ gọi huggingface_hub.login() thủ công trước khi chạy.")
        
+    if args.pretrain_repo is None:
+        print("Chưa cố checkpoint pretrain — yêu cầu set --pretrain_repo.")
+        exit(1)
     # ------------------------------------------------------------
     # Tokenizer — luôn load qua Hub (app/tokenizer/hub.py), KHÔNG build lagi
     # từ source ở script train (mục 7.0 docs/tokenizer_v0.1.md).
@@ -164,25 +161,7 @@ def main() -> None:
     # from-scratch — điểm khác biệt duy nhất so với train_pretrain.py).
     # ------------------------------------------------------------
     resume_checkpoint = resolve_resume_checkpoint(args.output_dir, args.repo_id)
-    model = build_model_for_resume_or_from_pretrain(resume_checkpoint, pretrain_repo, tok.vocab_size)
-        
-    sft_repo = f"{args.org}/trading-llm-{args.model_size}-sft"
-    pretrain_repo = args.pretrain_repo or f"{args.org}/trading-llm-{args.model_size}-pretrain"
-
-    # ------------------------------------------------------------
-    # Tokenizer — luôn load qua Hub (app/tokenizer/hub.py), KHÔNG build lại
-    # từ source ở script train (mục 7.0 docs/tokenizer_v0.1.md).
-    # ------------------------------------------------------------
-    tok = load_tokenizer(repo_id=args.tokenizer_repo, allow_local_fallback=False)
-    logger.info(f"tokenizer vocab_size = {tok.vocab_size}")
-
-    # ------------------------------------------------------------
-    # Resume checkpoint CỦA CHÍNH SFT (mục 5.1) — tìm TRƯỚC khi khởi tạo
-    # Trainer. Nếu None, model sẽ init từ pretrain_repo (không phải
-    # from-scratch — điểm khác biệt duy nhất so với train_pretrain.py).
-    # ------------------------------------------------------------
-    resume_checkpoint = resolve_resume_checkpoint(args.output_dir, sft_repo, args.push_to_hub)
-    model = build_model_for_resume_or_from_pretrain(resume_checkpoint, pretrain_repo, tok.vocab_size)
+    model = build_model_for_resume_or_from_pretrain(resume_checkpoint, args.pretrain_repo, tok.vocab_size)
 
     # ------------------------------------------------------------
     # Data — make_data_module (docs/data_module_v0.1.md), giống hệt
@@ -191,8 +170,6 @@ def main() -> None:
     data_args = DataArguments(
         dataset_name=args.dataset_name,
         dataset_mode=args.dataset_mode,
-        eval_dataset_name=args.eval_dataset_name,
-        num_proc=args.num_proc,
         max_length=args.max_length,
     )
     data_module = make_data_module(tok, data_args, is_pretrain=False)
@@ -215,14 +192,14 @@ def main() -> None:
         logging_steps=args.logging_steps,
         fp16=args.fp16,
         bf16=not args.fp16,
-        push_to_hub=args.push_to_hub,
-        hub_model_id=sft_repo if args.push_to_hub else None,
-        hub_strategy="checkpoint" if args.push_to_hub else "every_save",
+        push_to_hub=push_to_hub,
+        hub_model_id=args.repo_id if push_to_hub else None,
+        hub_strategy="checkpoint" if push_to_hub else "every_save",
         save_strategy="steps",
         save_steps=args.save_steps,
         save_total_limit=args.save_total_limit,
-        eval_strategy="steps" if data_module.get("eval_dataset") is not None else "no",
-        eval_steps=args.save_steps if data_module.get("eval_dataset") is not None else None,
+        eval_strategy="steps",
+        eval_steps=args.save_steps,
         report_to=[],
     )
 
@@ -241,7 +218,7 @@ def main() -> None:
     tok.save_pretrained(args.output_dir)
     if args.push_to_hub:
         trainer.push_to_hub(commit_message="Final SFT checkpoint")
-        logger.info(f"Đã push bản final lên: https://huggingface.co/{sft_repo}")
+        logger.info(f"Đã push bản final lên: https://huggingface.co/{args.repo_id}")
     else:
         logger.info(f"push_to_hub tắt (--no_push_to_hub) — checkpoint final chỉ lưu local tại {args.output_dir}")
 
