@@ -5,11 +5,11 @@ set -euo pipefail
 #   huggingface-cli login   # hoặc: export HF_TOKEN=hf_xxx
 
 python -m app.train.train_pretrain \
-    --model_size tiny \
+    --model_size base \
     --dataset_name "sullivan1502/tlang-pretrain-ids" \
     --dataset_mode pre_tokenized \
     \
-    --output_dir "./output/tiny_pretrain" \
+    --output_dir "./output/base_pretrain" \
     --per_device_train_batch_size 128 \
     --gradient_accumulation_steps 32 \
     --learning_rate 3e-4 \
