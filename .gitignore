@@ -12,3 +12,9 @@ data/preprocessed/train/
 data/preprocessed/val/
 data/dataset/
 app/data/__pycache__/
+app/data_prepare/__pycache__/
+app/training/__pycache__/
+app/training/model/__pycache__/
+app/training/reward/__pycache__/
+demos/__pycache__/
+tmp/

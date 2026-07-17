@@ -1,6 +1,6 @@
 """
 Demo nhanh cho Forward-test / Counterfactual engine — chạy:
-    python -m app.reward.forward_test_demo
+    python -m demos.forward_test_demo
 
 Test trực tiếp trên các hàm thuần túy (không cần qua Lexer/Parser) vì
 input ở đây chỉ là bin số nguyên + future_candles giả lập.

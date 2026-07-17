@@ -1,5 +1,5 @@
 """
-Demo nhanh cho unified_reward_func — chạy: python -m app.reward.reward_func_demo
+Demo nhanh cho unified_reward_func — chạy: python -m demos.reward_func_demo
 
 Test cả 3 gate (well-form fail / semantic fail / outcome), cơ chế
 weight_table theo trend+action, và StatsCollector.print_summary().

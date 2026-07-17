@@ -1,5 +1,5 @@
 """
-Demo nhanh cho Lexer + Parser — chạy: python -m app.lang.demo
+Demo nhanh cho Lexer + Parser — chạy: python -m demos.demo
 
 Không phải unit test chính thức (sẽ thêm sau bằng pytest), chỉ để
 kiểm tra nhanh các case điển hình trước khi ghép vào reward_func.

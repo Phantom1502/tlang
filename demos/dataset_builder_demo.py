@@ -1,5 +1,5 @@
 """
-Demo cho dataset_builder — chạy: python -m app.gen.dataset_builder_demo
+Demo cho dataset_builder — chạy: python -m demos.dataset_builder_demo
 
 Tạo 1 CSV OHLC giả lập (đã có cột ATR_100, mô phỏng output của
 app/preprocess/preprocess.py) rồi chạy full pipeline -> parquet, kiểm
@@ -42,12 +42,12 @@ def make_synthetic_ohlc_csv(path: str, n_rows: int = 400, seed: int = 7) -> None
 
 
 def run() -> None:
-    csv_path = "/tmp/synthetic_xauusd_m15.csv"
+    csv_path = "./tmp/synthetic_xauusd_m15.csv"
     make_synthetic_ohlc_csv(csv_path, n_rows=400)
 
     # Minh hoạ scale_factor.txt do Preprocess.preprocess() ghi ra ở bước 1
     # (tách riêng, độc lập) — load_scale_factors() đọc lại thay vì gõ tay số.
-    scale_factor_path = "/tmp/scale_factor.txt"
+    scale_factor_path = "./tmp/scale_factor.txt"
     with open(scale_factor_path, "w", encoding="utf-8") as f:
         f.write("synthetic_xauusd_m15: 24.74\n")
     scales = load_scale_factors(scale_factor_path)
@@ -60,7 +60,7 @@ def run() -> None:
     print("=== 1) Build GRPO parquet (kèm augment) ===")
     grpo_df = build_grpo_parquet(
         csv_paths_with_scale=[(csv_path, "XAUUSD_M15", xauusd_scale)],
-        output_path="/tmp/grpo_dataset.parquet",
+        output_path="./tmp/grpo_dataset.parquet",
         n_augments=2,
         seed=42,
     )
@@ -81,7 +81,7 @@ def run() -> None:
     assert n_aug > 0, "Augment phải sinh thêm ít nhất vài window (n_augments=2 > 0)"
 
     # Đọc lại từ parquet (round-trip thật, không chỉ dùng DataFrame trong bộ nhớ)
-    reloaded = pd.read_parquet("/tmp/grpo_dataset.parquet")
+    reloaded = pd.read_parquet("./tmp/grpo_dataset.parquet")
     assert len(reloaded) == len(grpo_df)
     assert list(reloaded.iloc[0]["future_bins"][0]) == list(grpo_df.iloc[0]["future_bins"][0])
     print("  -> Round-trip parquet OK.\n")
@@ -92,7 +92,7 @@ def run() -> None:
     print("=== 2) Build pretrain/SFT parquet (double-check well-formed) ===")
     sft_df = build_pretrain_sft_parquet(
         csv_paths_with_scale=[(csv_path, "XAUUSD_M15", xauusd_scale)],
-        output_path="/tmp/sft_dataset.parquet",
+        output_path="./tmp/sft_dataset.parquet",
         samples_per_chart=5,
         n_augments=1,
         seed=42,

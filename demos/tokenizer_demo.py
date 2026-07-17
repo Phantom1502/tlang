@@ -1,6 +1,6 @@
 """
 tokenizer_demo.py — Kiểm chứng nhanh cho tokenizer — chạy:
-    python -m app.tokenizer.tokenizer_demo
+    python -m demos.tokenizer_demo
 
 Tải tokenizer qua `app.tokenizer.hub.load_tokenizer()` (nguồn DUY NHẤT từ
 giờ trở đi — xem app/tokenizer/hub.py) thay vì build trực tiếp từ

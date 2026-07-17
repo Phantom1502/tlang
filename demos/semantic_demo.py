@@ -1,5 +1,5 @@
 """
-Demo nhanh cho Semantic Checker — chạy: python -m app.lang.semantic_demo
+Demo nhanh cho Semantic Checker — chạy: python -m demos.semantic_demo
 
 Test trên các completion ĐÃ well-formed (parse thành công), tập trung
 kiểm tra bảng 2.2 A/B/D/E.

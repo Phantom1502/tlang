@@ -1,6 +1,6 @@
 """
 model_configs_demo.py — Kiểm chứng nhanh cho model_configs.py — chạy:
-    python -m app.model.model_configs_demo
+    python -m demos.model_configs_demo
 
 Kiểm tra:
 1. Mọi preset build được `LlamaConfig` thật (transformers) không lỗi,

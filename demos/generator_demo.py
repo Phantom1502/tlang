@@ -1,5 +1,5 @@
 """
-Demo cho Generator — chạy: python -m app.gen.generator_demo
+Demo cho Generator — chạy: python -m demos.generator_demo
 
 Kiểm chứng 2 việc quan trọng nhất:
 1. MỌI mẫu sinh ra đều well-formed + semantic pass (đúng "by construction",
