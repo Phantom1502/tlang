@@ -42,9 +42,15 @@ class ForwardTestResult:
 # cần entry/SL/zone cùng lúc. Caller (unified reward func) cần cộng kết
 # quả này vào gate 2 (semantic), KHÔNG coi thất bại ở đây là "outcome=0".
 # =====================================================================
-def is_sl_valid(action_type: str, entry_bin: int, sl_bin: int, zone: ZoneNode) -> bool:
+def is_sl_valid(
+    action_type: str, entry_bin: int, sl_bin: int, zone: ZoneNode,
+    sl_min_dist_bins: int = SL_MIN_DIST_BINS,
+    sl_max_dist_bins: int = SL_MAX_DIST_BINS,
+) -> bool:
+    """Default = module constant (5/10) — dùng cho generator.py/demo không
+    đổi gì. GRPO (reward_func.py) truyền tường minh từ RoundConfig hiện tại."""
     dist = abs(entry_bin - sl_bin)
-    if not (SL_MIN_DIST_BINS <= dist <= SL_MAX_DIST_BINS):
+    if not (sl_min_dist_bins <= dist <= sl_max_dist_bins):
         return False
     if action_type == "BUY":
         return sl_bin < zone.lower_bin   # SL phải nằm dưới đáy zone_support

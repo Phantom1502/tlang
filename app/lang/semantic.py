@@ -47,6 +47,23 @@ class SemanticChecker:
     BUY_SIDE_ACTIONS = {"BUY", "CANCEL_BUY"}
     SELL_SIDE_ACTIONS = {"SELL", "CANCEL_SELL"}
 
+    def __init__(
+        self,
+        zone_width_min_bins: int = ZONE_WIDTH_MIN_BINS,
+        zone_width_max_bins: int = ZONE_WIDTH_MAX_BINS,
+    ) -> None:
+        """
+        Default = class constant (5/20) — KHÔNG đổi gì cho generator.py/demo
+        (SemanticChecker() không tham số vẫn y hệt trước). Chỉ nhánh GRPO
+        (app/training/reward/reward_func.py) truyền tường minh 2 giá trị này
+        từ RoundConfig của round hiện tại (app/training/reward/round_config.py)
+        — zone range CHỈ được phép chỉnh ở GRPO, nơi outcome thật mới cho biết
+        nên nới/siết thế nào; generator (data pretrain/SFT) giữ hardcode vì chỉ
+        cần đúng format.
+        """
+        self.zone_width_min_bins = zone_width_min_bins
+        self.zone_width_max_bins = zone_width_max_bins
+
     def check(self, program: ProgramNode) -> SemanticResult:
         chart, think, action = program.chart, program.think, program.action
         violations: List[str] = []
@@ -131,10 +148,10 @@ class SemanticChecker:
         if zone is None:
             return
         width = zone.upper_bin - zone.lower_bin
-        if not (self.ZONE_WIDTH_MIN_BINS <= width <= self.ZONE_WIDTH_MAX_BINS):
+        if not (self.zone_width_min_bins <= width <= self.zone_width_max_bins):
             violations.append(
                 f"zone={zone.direction} ({zone.lower_bin}:{zone.upper_bin}) có width={width} bin, "
-                f"ngoài phạm vi hợp lệ [{self.ZONE_WIDTH_MIN_BINS},{self.ZONE_WIDTH_MAX_BINS}]"
+                f"ngoài phạm vi hợp lệ [{self.zone_width_min_bins},{self.zone_width_max_bins}]"
             )
 
     # ------------------------------------------------------------------

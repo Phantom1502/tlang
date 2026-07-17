@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import json
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from app.lang.parser import Parser
 from app.lang.semantic import SemanticChecker
 from app.training.reward.forward_test import FutureCandle, evaluate_outcome
+from app.training.reward.round_config import RoundConfig
 
 # =====================================================================
 # Trọng số giữa 3 nhóm (well-form / semantic / outcome) — PLACEHOLDER.
@@ -63,6 +66,34 @@ class WeightTable:
 
 
 weight_table = WeightTable()   # singleton — import và sửa tay giữa các round
+
+
+# =====================================================================
+# RoundConfig singleton — mỗi round GRPO PHẢI load 1 RoundConfig tường
+# minh (zone_width/sl_dist range + weight_table) TRƯỚC khi train, cố
+# định cho tới hết round (không fallback ngầm — xem round_config.py).
+# =====================================================================
+_active_round_config: Optional[RoundConfig] = None
+
+
+def set_active_round_config(config: RoundConfig) -> None:
+    """Gọi 1 lần lúc khởi động train_grpo.py — mọi rank/process load CÙNG
+    1 file config nên tự nhiên đồng bộ, không cần cơ chế broadcast riêng.
+    Đồng bộ luôn weight_table singleton từ config.weight_table."""
+    global _active_round_config
+    _active_round_config = config
+    weight_table.reset()
+    weight_table.set_many(config.weight_table)
+
+
+def get_active_round_config() -> RoundConfig:
+    if _active_round_config is None:
+        raise RuntimeError(
+            "Chưa load RoundConfig cho round hiện tại — gọi "
+            "set_active_round_config(RoundConfig.load(path)) TRƯỚC khi train GRPO. "
+            "Zone/SL range KHÔNG có giá trị mặc định ngầm ở đây (xem round_config.py)."
+        )
+    return _active_round_config
 
 
 # =====================================================================
@@ -142,6 +173,47 @@ class StatsCollector:
                     f"freq={stat['freq_within_trend'] * 100:5.1f}%  avg_R={avg_r:>6}  win_rate={win_rate}"
                 )
 
+    # ------------------------------------------------------------------
+    # Persistence — cần thiết vì Colab session có thể bị ngắt/chạy lại
+    # NHIỀU LẦN trong CÙNG 1 round. Load-rồi-append: mỗi lần khởi động,
+    # nạp lại records đã dump trước khi log tiếp, để file trên đĩa luôn
+    # phản ánh TOÀN BỘ round tính đến hiện tại, không chỉ session này.
+    # ------------------------------------------------------------------
+    def to_list(self) -> List[Dict[str, Any]]:
+        return [asdict(r) for r in self._records]
+
+    def save(self, path: str) -> None:
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(self.to_list(), ensure_ascii=False), encoding="utf-8")
+
+    @classmethod
+    def load(cls, path: str) -> "StatsCollector":
+        """Dùng lúc khởi động 1 session MỚI cho round đang chạy dở (Colab bị
+        ngắt) — tiếp tục cộng dồn đúng, không mất thống kê các lần chạy trước
+        trong CÙNG round. File chưa tồn tại (lần đầu của round) -> collector rỗng."""
+        collector = cls()
+        p = Path(path)
+        if p.exists():
+            for d in json.loads(p.read_text(encoding="utf-8")):
+                collector.log(RolloutRecord(**d))
+        return collector
+
+    @classmethod
+    def merge_from_files(cls, paths: Sequence[str]) -> "StatsCollector":
+        """Gộp nhiều file rank-riêng (multi-GPU, mỗi rank tự dump 1 file theo
+        pattern vd f'{output_dir}/round{N}_stats_rank{rank}.json') thành 1
+        StatsCollector duy nhất — summary() lúc này mới đúng trên TOÀN BỘ
+        round, không chỉ 1 rank. File không tồn tại (rank chưa log gì) -> bỏ qua."""
+        collector = cls()
+        for path in paths:
+            p = Path(path)
+            if not p.exists():
+                continue
+            for d in json.loads(p.read_text(encoding="utf-8")):
+                collector.log(RolloutRecord(**d))
+        return collector
+
 
 stats_collector = StatsCollector()   # singleton — reset() giữa các round nếu muốn thống kê rolling
 
@@ -158,6 +230,7 @@ def score_completion(
     weights: Optional[WeightTable] = None,
 ) -> float:
     weights = weights if weights is not None else weight_table
+    round_config = get_active_round_config()   # fail loud nếu chưa set — xem set_active_round_config()
     future_candles: List[FutureCandle] = [tuple(c) for c in future_bins]  # type: ignore[misc]
 
     parse_result = Parser.from_text(completion).parse()
@@ -179,8 +252,18 @@ def score_completion(
     action_type = program.action.action_type
 
     # --- Gate 2: semantic (bảng A/B/D/E) + ràng buộc SL/target bổ sung ---
-    semantic_result = SemanticChecker().check(program)
-    extra_valid, forward_result = evaluate_outcome(program.action, program.think, future_candles)
+    # zone_width/sl_dist range LẤY TỪ round_config hiện tại (KHÔNG dùng
+    # default hardcode của SemanticChecker/evaluate_outcome — round GRPO
+    # luôn phải tường minh, xem round_config.py).
+    semantic_result = SemanticChecker(
+        zone_width_min_bins=round_config.zone_width_min_bins,
+        zone_width_max_bins=round_config.zone_width_max_bins,
+    ).check(program)
+    extra_valid, forward_result = evaluate_outcome(
+        program.action, program.think, future_candles,
+        sl_min_dist_bins=round_config.sl_min_dist_bins,
+        sl_max_dist_bins=round_config.sl_max_dist_bins,
+    )
     overall_semantic_passed = semantic_result.passed and extra_valid
 
     if not overall_semantic_passed:
