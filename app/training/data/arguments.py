@@ -10,3 +10,5 @@ class DataArguments:
     eval_split: str = "val"
     
     max_length: int = 512
+    
+    cache_dir: Optional[str] = None
