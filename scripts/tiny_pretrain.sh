@@ -4,7 +4,7 @@ set -euo pipefail
 # Chạy 1 lần trước, không nằm trong script:
 #   huggingface-cli login   # hoặc: export HF_TOKEN=hf_xxx
 
-python -m aapp.training.train_pretrain \
+python -m app.training.train_pretrain \
     --model_size tiny \
     --dataset_name "sullivan1502/tlang-pretrain-ids" \
     --dataset_mode pre_tokenized \

@@ -44,10 +44,10 @@ from typing import Any, Dict, List
 # áp dụng ngay cả khi file này bị import (không chỉ khi chạy __main__).
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
+from app.training.data.masking import LABEL_PAD_ID, compute_labels  # noqa: E402 — sau os.environ.setdefault ở trên
+
 logger = logging.getLogger("build_tokenized_dataset")
 logging.basicConfig(level=logging.INFO, format="[%(name)s] %(message)s")
-
-LABEL_PAD_ID = -100
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -112,13 +112,15 @@ def _tokenize_and_mask_batch(
     n_fully_masked = 0
 
     for prompt_ids, full_ids in zip(prompt_ids_batch, full_ids_batch):
-        n_mask = min(1 + len(prompt_ids), len(full_ids))
-        if len(full_ids) > max_length:
-            full_ids = full_ids[:max_length]
-            n_mask = min(n_mask, len(full_ids))
-
-        labels = [LABEL_PAD_ID] * n_mask + full_ids[n_mask:]
-        if n_mask >= len(full_ids):
+        # 1 nguồn sự thật duy nhất cho rule mask — dùng chung với
+        # DataCollatorForCoT (app/training/data/data_module.py), xem masking.py.
+        # LUÔN mask: dataset "ids" này dùng CHUNG cho cả pretrain lẫn SFT — phía
+        # train (DataCollatorForPreTokenizedCoT) tự quyết định có dùng cột labels
+        # đã mask này hay bỏ qua để build lại full-sequence cho pretrain; bước build
+        # ids không được tự ý quyết định thay (build ids không biết trước dataset
+        # này sẽ chỉ dùng cho pretrain hay còn tái dùng cho SFT).
+        full_ids, labels = compute_labels(prompt_ids, full_ids, max_length)
+        if labels and all(l == LABEL_PAD_ID for l in labels):
             n_fully_masked += 1
 
         out_input_ids.append(full_ids)

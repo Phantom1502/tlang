@@ -8,8 +8,7 @@ from datasets import load_dataset
 from transformers import PreTrainedTokenizerBase
 
 from app.training.data.arguments import DataArguments
-
-LABEL_PAD_ID = -100
+from app.training.data.masking import LABEL_PAD_ID, compute_labels
 
 
 def _pad_encoded(
@@ -59,17 +58,18 @@ class DataCollatorForCoT:
 
         for feat in features:
             prompt, completion = feat["prompt"], feat["completion"]
-
             full_ids = self.tokenizer(prompt + " " + completion, add_special_tokens=True)["input_ids"]
-            if self.max_length is not None and len(full_ids) > self.max_length:
-                full_ids = full_ids[: self.max_length]
 
             if self.is_pretrain:
-                labels = list(full_ids)   # full-sequence loss — KHÔNG mask gì
+                # full-sequence loss — KHÔNG mask gì (pretrain học cả chart, đã chốt lại thiết kế)
+                if self.max_length is not None and len(full_ids) > self.max_length:
+                    full_ids = full_ids[: self.max_length]
+                labels = list(full_ids)
             else:
                 prompt_ids = self.tokenizer(prompt, add_special_tokens=False)["input_ids"]
-                n_mask = min(1 + len(prompt_ids), len(full_ids))
-                labels = [self.label_pad_token_id] * n_mask + full_ids[n_mask:]
+                # 1 nguồn sự thật duy nhất cho rule mask — dùng chung với
+                # build_tokenized_dataset.py (nhánh pre_tokenized), xem masking.py
+                full_ids, labels = compute_labels(prompt_ids, full_ids, self.max_length)
 
             batch_input_ids.append(full_ids)
             batch_labels.append(labels)

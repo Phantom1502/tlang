@@ -1,17 +1,11 @@
 """
-app/gen/dataset_builder.py — Pipeline raw OHLC (đã preprocess, có cột ATR_100)
--> parquet dataset hoàn thiện, cho cả GRPO (schema mục 7.3) và pretrain/SFT
-(schema mục 7.2).
+app/data_prepare/dataset_builder.py — Pipeline raw OHLC (đã preprocess, có
+cột ATR_100) -> parquet dataset hoàn thiện, cho cả GRPO (schema mục 7.3) và
+pretrain/SFT (schema mục 7.2).
 
-KHÔNG import lại app/preprocess/candle.py, app/gen/base_gen.py,
-app/gen/rawchart_gen.py, app/utils/parquet_writer.py — đây là source cũ
-từ dự án trước (học 100 nến, input 50 nến dự đoán giá), chỉ MƯỢN Ý TƯỞNG
-2 chỗ:
-  1. Cách windows hoá + encode bin qua ChartCodec (module thật, dùng lại
-     trực tiếp — không phải "source cũ" theo nghĩa cần viết lại).
-  2. Data augmentation kiểu "shift đều toàn bộ window theo 1 delta bin
-     ngẫu nhiên" (ý tưởng từ RawChartGenerator cũ) — viết lại sạch ở đây
-     (`augment_shift`), không phụ thuộc CandleParser cũ.
+Dùng lại trực tiếp ChartCodec (app/data_prepare/chartcodec.py) để windows
+hoá + encode bin, và tự viết `augment_shift` (shift đều toàn bộ window
+theo 1 delta bin ngẫu nhiên) — không phụ thuộc code project nào khác.
 
 Cầu nối quan trọng nhất trong module này: `ChartCodec.encode_window` xuất
 text KHÔNG có dấu ngoặc quanh từng field ("O_434 H_543..."), nhưng grammar

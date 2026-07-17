@@ -1,6 +1,6 @@
 """
-app/gen/push_dataset_to_hub.py — Upload dataset (output của
-app/gen/dataset_builder.py) lên 1 dataset repo trên HF Hub.
+app/data_prepare/push_dataset_to_hub.py — Upload dataset (output của
+app/data_prepare/dataset_builder.py) lên 1 dataset repo trên HF Hub.
 
 v3.1 — Upload thẳng vào ROOT của repo (không tạo thư mục con "data/").
 `datasets.load_dataset()` tự nhận diện split qua TỪ KHÓA trong tên file
@@ -88,7 +88,7 @@ def _validate_schema_light(path: str) -> str:
 def _upload_files(
     paths: Sequence[str],
     repo_id: str,
-    split_dir: str,   # "train" | "validation"
+    split_dir: str,   # "train" | "val" — PHẢI khớp DataArguments.eval_split (app/training/data/arguments.py)
     private: bool,
     commit_message: str,
     token: Optional[str],
@@ -114,7 +114,9 @@ def _upload_files(
         basename = os.path.basename(path)
         # Prefix tên split vào tên file (thay vì đặt trong thư mục con) —
         # datasets.load_dataset() nhận diện split qua từ khóa "train"/
-        # "validation" xuất hiện trong tên file, không cần thư mục riêng.
+        # "val" xuất hiện trong tên file, không cần thư mục riêng — PHẢI
+        # khớp đúng "val" (không phải "validation") vì repo Hub đã có YAML
+        # config tường minh trỏ theo tên "val".
         remote_path = basename if split_dir in basename else f"{split_dir}-{basename}"
 
         if remote_path in existing_files:
@@ -153,8 +155,8 @@ def push_dataset(
         _upload_files(parquet_paths, repo_id, "train", private, commit_message, token, dry_run)
 
     if holdout_parquet_paths:
-        print(f"[push_dataset_to_hub] upload {len(holdout_parquet_paths)} file -> split validation (hold-out)")
-        _upload_files(holdout_parquet_paths, repo_id, "validation", private, commit_message, token, dry_run)
+        print(f"[push_dataset_to_hub] upload {len(holdout_parquet_paths)} file -> split val (hold-out)")
+        _upload_files(holdout_parquet_paths, repo_id, "val", private, commit_message, token, dry_run)
 
     if not dry_run:
         print(f"\nXong. Kiểm tra lại bằng: datasets.load_dataset({repo_id!r})")
@@ -165,7 +167,7 @@ def main() -> None:
     p.add_argument("--parquet_paths", nargs="+", default=None, help="File parquet đưa vào split train")
     p.add_argument(
         "--holdout_parquet_paths", nargs="+", default=None,
-        help="File parquet RIÊNG BIỆT đưa vào split validation (hold-out, khác thời gian/symbol)",
+        help="File parquet RIÊNG BIỆT đưa vào split val (hold-out, khác thời gian/symbol)",
     )
     p.add_argument("--repo_id", required=True, help="vd: my-org/trading-llm-pretrain")
     p.add_argument("--private", action="store_true")
