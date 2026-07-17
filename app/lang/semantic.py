@@ -35,6 +35,15 @@ class SemanticChecker:
     VIOLATION_PENALTY = 0.2       # placeholder — tinh chỉnh sau khi có dữ liệu GRPO thực nghiệm
     LAST_N_CANDLES_TOUCH = 5
 
+    # Ngưỡng bề rộng zone — số bin cố định set tay (spec mục 7.1, cùng cấp với
+    # SL_MIN_DIST_BINS/SL_MAX_DIST_BINS ở app/training/reward/forward_test.py).
+    # Giá trị kế thừa NGUYÊN VẸN từ app/data_prepare/generator.py (nơi từng là
+    # nguồn duy nhất định nghĩa 2 hằng số này) — vẫn là placeholder, set tay
+    # lại theo dữ liệu thật khi cần. Generator giờ import lại từ ĐÂY thay vì
+    # tự định nghĩa bản riêng (tránh lệch giữa 2 nơi).
+    ZONE_WIDTH_MIN_BINS = 5
+    ZONE_WIDTH_MAX_BINS = 20
+
     BUY_SIDE_ACTIONS = {"BUY", "CANCEL_BUY"}
     SELL_SIDE_ACTIONS = {"SELL", "CANCEL_SELL"}
 
@@ -56,6 +65,7 @@ class SemanticChecker:
 
         self._check_trend_zone(think, violations)
         self._check_zone_direction_vs_price(think, violations)
+        self._check_zone_width(think, violations)
         expected_price_in_zone = self._check_price_in_zone_geometry(chart, think, violations)
         self._check_action_group(think, action, violations, expected_price_in_zone)
 
@@ -107,6 +117,25 @@ class SemanticChecker:
                     f"zone_resistance ({zone.lower_bin}:{zone.upper_bin}) nằm hoàn toàn dưới current_price "
                     f"({current}) — zone_resistance phải nằm trên hoặc chứa giá hiện tại"
                 )
+
+    # ------------------------------------------------------------------
+    # B2. Bề rộng Zone — BỔ SUNG (không có trong bảng A/B/D/E gốc của spec
+    # mục 2.2, nhưng spec mục 7.1 có nhắc ZONE_WIDTH_MIN_BINS/MAX_BINS như
+    # 1 ràng buộc set tay, cùng cấp với SL_MIN_DIST_BINS/MAX_BINS. Trước
+    # đây constraint này CHỈ được generator tôn trọng lúc sinh data, không
+    # verifier nào kiểm tra lại lúc GRPO — vi phạm nguyên tắc "verifier =
+    # lật ngược generator" (mục 4.4). Thêm ở đây để đóng gap này.
+    # ------------------------------------------------------------------
+    def _check_zone_width(self, think: ThinkNode, violations: List[str]) -> None:
+        zone = think.zone
+        if zone is None:
+            return
+        width = zone.upper_bin - zone.lower_bin
+        if not (self.ZONE_WIDTH_MIN_BINS <= width <= self.ZONE_WIDTH_MAX_BINS):
+            violations.append(
+                f"zone={zone.direction} ({zone.lower_bin}:{zone.upper_bin}) có width={width} bin, "
+                f"ngoài phạm vi hợp lệ [{self.ZONE_WIDTH_MIN_BINS},{self.ZONE_WIDTH_MAX_BINS}]"
+            )
 
     # ------------------------------------------------------------------
     # D. price_in_zone ↔ hình học thật

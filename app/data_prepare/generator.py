@@ -13,13 +13,17 @@ from app.training.reward.forward_test import SL_MAX_DIST_BINS, SL_MIN_DIST_BINS,
 Candle = Tuple[int, int, int, int]   # (o, h, l, c)
 
 # =====================================================================
-# Config — PLACEHOLDER. Ngưỡng zone-width là "số bin cố định do người
-# tạo dữ liệu set trực tiếp bên ngoài" (đã chốt trong spec mục 5.2/7.1)
-# — bạn tự có rule riêng, đây chỉ là giá trị mặc định để generator này
-# chạy độc lập được. Đổi 2 hằng số dưới đây theo đúng ngưỡng bạn dùng.
+# Ngưỡng zone-width — LẤY TỪ SemanticChecker (app/lang/semantic.py),
+# ĐÂY LÀ NGUỒN SỰ THẬT DUY NHẤT từ giờ trở đi. Trước đây generator tự
+# định nghĩa 2 hằng số này (bản PLACEHOLDER riêng) mà KHÔNG nơi nào
+# verify lại lúc GRPO rollout — vi phạm nguyên tắc "verifier = lật ngược
+# generator" (spec mục 4.4). Đã fix bằng cách thêm
+# SemanticChecker._check_zone_width() và chuyển 2 hằng số này về đó,
+# generator chỉ còn import lại — đổi ngưỡng thì sửa ở app/lang/semantic.py,
+# KHÔNG sửa ở đây.
 # =====================================================================
-ZONE_WIDTH_MIN_BINS = 5
-ZONE_WIDTH_MAX_BINS = 20
+ZONE_WIDTH_MIN_BINS = SemanticChecker.ZONE_WIDTH_MIN_BINS
+ZONE_WIDTH_MAX_BINS = SemanticChecker.ZONE_WIDTH_MAX_BINS
 
 LAST_N_CANDLES_TOUCH = 5   # khớp SemanticChecker.LAST_N_CANDLES_TOUCH
 
