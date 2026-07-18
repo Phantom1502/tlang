@@ -1,6 +1,7 @@
 # ── Core ML / training (app/memlm) ──────────────────────────────────────
 torch>=2.1
 transformers>=4.38
+trl==1.8.0
 datasets>=2.18
 accelerate>=0.27
 

@@ -23,7 +23,7 @@ python -m app.training.train_sft \
     --output_dir "./output/base_sft" \
     --per_device_train_batch_size 128 \
     --gradient_accumulation_steps 32 \
-    --learning_rate 3e-4 \
+    --learning_rate 1e-4 \
     --warmup_ratio 0.03 \
     --max_steps 1000 \
     --num_train_epochs 1 \

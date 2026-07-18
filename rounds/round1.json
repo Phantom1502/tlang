@@ -1,0 +1,14 @@
+{
+  "round_id": "round1",
+  "zone_width_min_bins": 5,
+  "zone_width_max_bins": 20,
+  "sl_min_dist_bins": 5,
+  "sl_max_dist_bins": 10,
+  "weight_table": {
+    "UP":    { "BUY":  1.0, "CANCEL_BUY":  1.0, "WAIT_BUY":  1.0 },
+    "DOWN":  { "SELL": 1.0, "CANCEL_SELL": 1.0, "WAIT_SELL": 1.0 },
+    "RANGE": { "BUY":  1.0, "CANCEL_BUY":  1.0, "WAIT_BUY":  1.0,
+               "SELL": 1.0, "CANCEL_SELL": 1.0, "WAIT_SELL": 1.0,
+               "HOLD": 1.0 }
+  }
+}
