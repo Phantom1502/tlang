@@ -25,13 +25,13 @@ python -m app.training.train_sft \
     --gradient_accumulation_steps 32 \
     --learning_rate 1e-4 \
     --warmup_ratio 0.03 \
-    --max_steps 100 \
+    --max_steps 1000 \
     --num_train_epochs 1 \
     --logging_steps 5 \
     \
     --save_steps 50 \
     --save_total_limit 2 \
-    --repo_id "sullivan1502/base-sft-test" \
+    --repo_id "sullivan1502/base-sft" \
     --hf_token "$HF_TOKEN" \
     \
     --fp16 \
