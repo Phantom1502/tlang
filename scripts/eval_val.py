@@ -24,7 +24,7 @@ Usage:
         --output_json ./eval_out/base_grpo_val.json
 
     # Khớp đúng zone/SL range của round1 (nếu model được train với round1.json):
-    python -m scripts.eval_val --model_repo sullivan1502/base-grpo-test --dataset_name sullivan1502/tlang-grpo --split val --round_config ./rounds/round1.json --output_json ./eval_out/base_grpo_round1_val.json
+    python -m scripts.eval_val --model_repo sullivan1502/base-grpo-test --dataset_name sullivan1502/tlang-grpo --split val --round_config ./rounds/round1.json --output_json ./output/eval_out/base_grpo_round1_val.json
 
     # Debug nhanh trên 20 sample đầu, greedy decode:
     python -m scripts.eval_val --model_repo ... --dataset_name ... --split val \\
@@ -283,6 +283,7 @@ def main() -> None:
         )
 
     ds = load_dataset(args.dataset_name, split=args.split)
+    #ds = load_dataset("parquet", data_files="data/dataset/XAUUSD_M1_Val_grpo_dataset.parquet", split='train')
     if args.limit is not None:
         ds = ds.select(range(min(args.limit, len(ds))))
     logger.info(f"Loaded {len(ds)} sample từ {args.dataset_name} split={args.split}")
