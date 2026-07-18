@@ -44,21 +44,12 @@ class WeightTable:
         return {t: dict(a) for t, a in self._table.items()}
 
 
-weight_table = WeightTable()   # singleton — import và sửa tay giữa các round
+weight_table = WeightTable()
 
-
-# =====================================================================
-# RoundConfig singleton — mỗi round GRPO PHẢI load 1 RoundConfig tường
-# minh (zone_width/sl_dist range + weight_table) TRƯỚC khi train, cố
-# định cho tới hết round (không fallback ngầm — xem round_config.py).
-# =====================================================================
 _active_round_config: Optional[RoundConfig] = None
 
 
 def set_active_round_config(config: RoundConfig) -> None:
-    """Gọi 1 lần lúc khởi động train_grpo.py — mọi rank/process load CÙNG
-    1 file config nên tự nhiên đồng bộ, không cần cơ chế broadcast riêng.
-    Đồng bộ luôn weight_table singleton từ config.weight_table."""
     global _active_round_config
     _active_round_config = config
     weight_table.reset()
@@ -67,11 +58,7 @@ def set_active_round_config(config: RoundConfig) -> None:
 
 def get_active_round_config() -> RoundConfig:
     if _active_round_config is None:
-        raise RuntimeError(
-            "Chưa load RoundConfig cho round hiện tại — gọi "
-            "set_active_round_config(RoundConfig.load(path)) TRƯỚC khi train GRPO. "
-            "Zone/SL range KHÔNG có giá trị mặc định ngầm ở đây (xem round_config.py)."
-        )
+        raise RuntimeError("Chưa load RoundConfig — gọi set_active_round_config(RoundConfig.load(path)) trước.")
     return _active_round_config
 
 
@@ -174,8 +161,7 @@ class StatsCollector:
         collector = cls()
         for path in paths:
             p = Path(path)
-            if not p.exists():
-                continue
+            if not p.exists(): continue
             for d in json.loads(p.read_text(encoding="utf-8")):
                 collector.log(RolloutRecord(**d))
         return collector
@@ -258,15 +244,20 @@ def score_completion(
         reward = base + zone_bonus + min(0.0, timing_score)
 
     elif action_type in ("BUY", "SELL"):
-        # Có bấm nút -> vừa chấm zone (probe độc lập, KHÔNG dùng SL/RR model chọn)
-        # vừa chấm timing (forward_result — outcome thật với đúng SL/RR/entry model chọn).
-        # TODO: vào lệnh phải trừ phí vào lệnh, để phân loại giữa 2 loại action: vào lệnh
-        # ảo tưởng RR to, và đứng ngoài, vào RR to thì vừa lỗ, vừa bị trừ phí, đứng ngoài
-        # thì chỉ bị trừ chi phí cơ hội, ngược lại tiết kiệm tiền phí
         probe = probe_zone_quality(think.zone, future_candles)
         zone_bonus = round_config.zone_quality_bonus if probe.r_multiple > 0 else 0.0
         w = weights.get(trend, action_type)
-        timing_score = forward_result.r_multiple * w
+
+        # Phí giao dịch kiểu spread — cố định theo BIN (round_config.trade_fee_bins),
+        # quy đổi ra R-multiple theo risk CỦA CHÍNH lệnh này (risk_bins = |entry-SL|),
+        # giống spread ảnh hưởng R nhiều hơn khi SL đặt sát (risk nhỏ). CHỈ áp cho
+        # BUY/SELL thật (vào lệnh thật) — CANCEL/WAIT/HOLD không trả phí vì không
+        # thật sự có vị thế nào được mở.
+        risk_bins = abs(think.current_price_bin - action.sl)
+        fee_in_r = round_config.trade_fee_bins / risk_bins if risk_bins > 0 else 0.0
+        net_r_multiple = forward_result.r_multiple - fee_in_r
+
+        timing_score = net_r_multiple * w
         reward = base + zone_bonus + timing_score
 
     else:

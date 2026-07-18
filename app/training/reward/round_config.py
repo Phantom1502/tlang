@@ -30,6 +30,7 @@ _REQUIRED_KEYS = (
     "sl_max_dist_bins",
     "pass_gate2_bonus",      # K — mới
     "zone_quality_bonus",    # mới
+    "trade_fee_bins",
 )
 
 
@@ -43,6 +44,7 @@ class RoundConfig:
     sl_max_dist_bins: int
     pass_gate2_bonus: float      # K — sàn cộng thêm khi pass gate 2, ÁP DỤNG MỌI action
     zone_quality_bonus: float    # cộng thêm nếu probe_zone_quality thắng (WAIT/CANCEL/BUY/SELL)
+    trade_fee_bins: float   # phí cố định (bin), quy đổi ra R-multiple theo risk CỦA CHÍNH lệnh đó — vd 0.5
 
     def __post_init__(self) -> None:
         """
@@ -77,6 +79,8 @@ class RoundConfig:
                 f"zone_quality_bonus phải >= 0 (chỉ CỘNG khi probe thắng, không bao giờ trừ) "
                 f"— nhận {self.zone_quality_bonus}."
             )
+        if self.trade_fee_bins < 0:
+            raise ValueError(f"trade_fee_bins phải >= 0 (phí, không phải bonus), nhận {self.trade_fee_bins}.")
 
     @classmethod
     def load(cls, path: str) -> "RoundConfig":
@@ -108,6 +112,7 @@ class RoundConfig:
             sl_max_dist_bins=int(data["sl_max_dist_bins"]),
             pass_gate2_bonus=float(data["pass_gate2_bonus"]),
             zone_quality_bonus=float(data["zone_quality_bonus"]),
+            trade_fee_bins=float(data["trade_fee_bins"]),
         )
 
     def save(self, path: str) -> None:

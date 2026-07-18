@@ -14,6 +14,14 @@ BIN_MAX = 1023
 
 HORIZON = 50
 
+# Buffer khi mô phỏng SL "ở mép zone" — dùng chung tinh thần với
+# counterfactual_outcome (vốn đã dùng buffer 1 bin cho CANCEL), nhưng
+# TÁCH RIÊNG hằng số vì 2 hàm mô phỏng entry KHÁC NHAU (probe_zone_quality
+# entry = mép zone; counterfactual_outcome entry = giá hiện tại) — không
+# gộp chung 1 hàm, chỉ dùng chung Ý TƯỞNG buffer để không đặt SL đúng y
+# hệt biên zone (dễ bị vi phạm ngay bởi noise 1 bin).
+ZONE_PROBE_SL_BUFFER_BINS = 1
+
 FutureCandle = Tuple[int, int, int, int]
 
 
@@ -110,9 +118,9 @@ def probe_zone_quality(
     hợp đo chất lượng zone, không phải 1 lệnh thật do model chọn.
     """
     if zone.direction == "support":
-        entry, sl, direction = zone.upper_bin, zone.lower_bin, "long"
+        entry, sl, direction = zone.upper_bin, zone.lower_bin - ZONE_PROBE_SL_BUFFER_BINS, "long"
     else:  # resistance
-        entry, sl, direction = zone.lower_bin, zone.upper_bin, "short"
+        entry, sl, direction = zone.lower_bin, zone.upper_bin + ZONE_PROBE_SL_BUFFER_BINS, "short"
 
     target = derive_target(entry, sl, rr=1.0, direction=direction)
     if target is None:
