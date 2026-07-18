@@ -251,12 +251,10 @@ def score_completion(
         reward = base + zone_bonus
         
     elif action_type in ("CANCEL_BUY", "CANCEL_SELL"):
-        print(think.zone)
         probe = probe_zone_quality(think.zone, future_candles)
         zone_bonus = round_config.zone_quality_bonus if probe.r_multiple > 0 else 0.0
         w = weights.get(trend, action_type)
         timing_score = forward_result.r_multiple * w
-        print(f"action_type={action_type}  zone_bonus={zone_bonus}  timing_score={timing_score}")
         reward = base + zone_bonus + min(0.0, timing_score)
 
     elif action_type in ("BUY", "SELL"):
