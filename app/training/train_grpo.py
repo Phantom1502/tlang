@@ -164,6 +164,13 @@ def build_model_for_round(resume_checkpoint, init_from_repo: str | None, model_s
     logger.info(f"model.config.use_cache = {model.config.use_cache}")
     return model
 
+def _seed_from_round_id(round_id: str) -> int:
+    """Derive 1 seed int ổn định từ round_id — mỗi round_id khác nhau
+    -> seed khác nhau -> shuffle khác nhau, nhưng CÙNG round_id chạy lại
+    (session bị ngắt giữa chừng, resume) vẫn ra cùng seed -> không phá
+    vỡ tính resumable đã thiết kế (mục 6.1/6.3)."""
+    import hashlib
+    return int(hashlib.md5(round_id.encode()).hexdigest(), 16) % (2**31)
 
 def main() -> None:
     args = build_arg_parser().parse_args()
@@ -267,6 +274,7 @@ def main() -> None:
 
     training_args = GRPOConfig(
         output_dir=args.output_dir,
+        seed=_seed_from_round_id(args.round_id),
         remove_unused_columns=False,
         per_device_train_batch_size=args.per_device_train_batch_size,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
