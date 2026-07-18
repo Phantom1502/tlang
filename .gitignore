@@ -19,3 +19,4 @@ app/training/reward/__pycache__/
 demos/__pycache__/
 tmp/
 output/
+scripts/__pycache__/

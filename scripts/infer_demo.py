@@ -8,7 +8,7 @@ Giả định:
 
 Cách chạy trong Colab (1 cell):
     %cd /content/tlang
-    !python infer_demo.py --model_repo sullivan1502/tiny-pretrain --n_samples 3
+    !python -m scripts.infer_demo --model_repo sullivan1502/base-grpo-test --n_samples 3
 
 Hoặc paste thẳng nội dung dưới vào 1 cell, sửa MODEL_REPO ở main().
 """

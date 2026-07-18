@@ -238,7 +238,7 @@ def score_completion(
         return R_WF_FULL + sem_score
 
     # --- Gate 3: đã pass gate 2 — "đọ sức giữa các nhánh" ---
-    K = round_config.pass_gate2_bonus
+    K = round_config.pass_gate2_bonus # cộng điểm sàn, mọi gen đúng semantic thì đều có điểm
     base = R_WF_FULL + R_SEM_FULL + K
 
     if action_type == "HOLD":
@@ -246,16 +246,22 @@ def score_completion(
         reward = base
 
     elif action_type in ("WAIT_BUY", "WAIT_SELL", "CANCEL_BUY", "CANCEL_SELL"):
-        # Không bấm nút vào lệnh -> KHÔNG có timing_score (kể cả CANCEL, đã bỏ hẳn
-        # counterfactual_outcome riêng — tương đương WAIT về tầng điểm này).
-        # Chỉ chấm chất lượng ZONE bằng probe độc lập, mép-đối-mép, RR=1.
+        # Không bấm nút vào lệnh => lúc này, giá trong zone, đã tìm zone tốt cho ông,
+        # nếu tại giá hiện tại, đáng lẽ vào lệnh ông sẽ thắng ít nhất 1R nhưng ông ko 
+        # vào, thì phải trừ điểm zone này ra. ngược lại, không cần công thêm điểm.
         probe = probe_zone_quality(think.zone, future_candles)
         zone_bonus = round_config.zone_quality_bonus if probe.r_multiple > 0 else 0.0
-        reward = base + zone_bonus
+        w = weights.get(trend, action_type)
+        timing_score = forward_result.r_multiple * w
+        print(f"action_type={action_type}  zone_bonus={zone_bonus}  timing_score={timing_score}")
+        reward = base + zone_bonus + min(0.0, timing_score)
 
     elif action_type in ("BUY", "SELL"):
         # Có bấm nút -> vừa chấm zone (probe độc lập, KHÔNG dùng SL/RR model chọn)
         # vừa chấm timing (forward_result — outcome thật với đúng SL/RR/entry model chọn).
+        # TODO: vào lệnh phải trừ phí vào lệnh, để phân loại giữa 2 loại action: vào lệnh
+        # ảo tưởng RR to, và đứng ngoài, vào RR to thì vừa lỗ, vừa bị trừ phí, đứng ngoài
+        # thì chỉ bị trừ chi phí cơ hội, ngược lại tiết kiệm tiền phí
         probe = probe_zone_quality(think.zone, future_candles)
         zone_bonus = round_config.zone_quality_bonus if probe.r_multiple > 0 else 0.0
         w = weights.get(trend, action_type)
