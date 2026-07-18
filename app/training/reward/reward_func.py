@@ -245,7 +245,7 @@ def score_completion(
         # RANGE không zone — không có gì để đánh giá thêm, chỉ nhận K như mọi nhánh khác.
         reward = base
 
-    elif action_type in ("WAIT_BUY", "WAIT_SELL", "CANCEL_BUY", "CANCEL_SELL"):
+    elif action_type in ("WAIT_BUY", "WAIT_SELL"):
         probe = probe_zone_quality(think.zone, future_candles)
         zone_bonus = round_config.zone_quality_bonus if probe.r_multiple > 0 else 0.0
         reward = base + zone_bonus
