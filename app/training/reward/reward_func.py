@@ -246,9 +246,12 @@ def score_completion(
         reward = base
 
     elif action_type in ("WAIT_BUY", "WAIT_SELL", "CANCEL_BUY", "CANCEL_SELL"):
-        # Không bấm nút vào lệnh => lúc này, giá trong zone, đã tìm zone tốt cho ông,
-        # nếu tại giá hiện tại, đáng lẽ vào lệnh ông sẽ thắng ít nhất 1R nhưng ông ko 
-        # vào, thì phải trừ điểm zone này ra. ngược lại, không cần công thêm điểm.
+        probe = probe_zone_quality(think.zone, future_candles)
+        zone_bonus = round_config.zone_quality_bonus if probe.r_multiple > 0 else 0.0
+        reward = base + zone_bonus
+        
+    elif action_type in ("CANCEL_BUY", "CANCEL_SELL"):
+        print(think.zone)
         probe = probe_zone_quality(think.zone, future_candles)
         zone_bonus = round_config.zone_quality_bonus if probe.r_multiple > 0 else 0.0
         w = weights.get(trend, action_type)
