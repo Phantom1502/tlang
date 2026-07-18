@@ -242,12 +242,29 @@ def main() -> None:
     # xem app/tokenizer/hub.py), KHÔNG build lại từ source.
     # ------------------------------------------------------------
     tok = load_tokenizer(repo_id=args.repo_id, allow_local_fallback=False)
-    # Tắt việc tự động thêm EOS khi gọi add_special_tokens=True
-    tok.add_eos_token = False
-
-    # (Tuỳ chọn) Đảm bảo BOS vẫn được thêm
-    tok.add_bos_token = True
     logger.info(f"tokenizer vocab_size = {tok.vocab_size}")
+
+    # ------------------------------------------------------------
+    # GRPO-only tokenizer quirk: TRL gọi `self.processing_class(text=prompts)`
+    # KHÔNG truyền add_special_tokens (mặc định True) để tokenize PROMPT lúc
+    # rollout — post_processor mặc định của mình bọc CẢ <bos> lẫn <eos> quanh
+    # prompt, khiến model thấy 1 <eos> giữa chart và think (sai — <eos> chỉ
+    # nên đứng cuối CẢ sequence, đúng convention lúc SFT: <bos>+prompt+
+    # completion+<eos>). Set add_eos_token=False (giữ add_bos_token=True) để
+    # tokenizer tự rebuild post_processor thành "chỉ <bos>, không <eos>" cho
+    # MỌI lần encode với add_special_tokens=True sau đây — cần thiết vì TRL
+    # không cho cách nào khác để chỉnh add_special_tokens từ ngoài.
+    #
+    # ĐÁNH ĐỔI: đây là mutation VĨNH VIỄN trên chính object `tok` — Trainer
+    # tự động lưu `processing_class` (= tok đã mutate) vào MỌI checkpoint
+    # theo save_steps, nên tokenizer.json trong các checkpoint GRPO từ giờ
+    # sẽ KHÁC bản canonical trên Hub (thiếu eos-wrap). Không ảnh hưởng pipeline
+    # CỦA CHÍNH TA (mọi lần chạy lại đều load_tokenizer() thẳng từ Hub, không
+    # đọc lại tokenizer từ checkpoint local) — chỉ ảnh hưởng nếu ai đó load
+    # RIÊNG tokenizer từ 1 checkpoint GRPO cụ thể cho việc khác. Artifact CUỐI
+    # CÙNG được vá lại đúng bằng canonical_tok bên dưới (xem cuối main()).
+    tok.add_eos_token = False
+    tok.add_bos_token = True
 
     # ------------------------------------------------------------
     # Resume checkpoint CỦA CHÍNH ROUND NÀY — tìm TRƯỚC khi khởi tạo Trainer.
@@ -326,7 +343,15 @@ def main() -> None:
     trainer.train(resume_from_checkpoint=resume_checkpoint)
 
     trainer.save_model()
-    tok.save_pretrained(args.output_dir)
+    # QUAN TRỌNG: lưu tokenizer CANONICAL (load lại fresh, KHÔNG dùng `tok` đã
+    # bị mutate add_eos_token/add_bos_token ở trên) — artifact cuối cùng push
+    # lên Hub phải khớp đúng tokenizer chuẩn (docs/tokenizer_v0.1.md: tokenizer
+    # là artifact bất biến), không mang theo quirk chỉ cần cho lúc rollout nội
+    # bộ GRPOTrainer. Các checkpoint TRUNG GIAN (save_steps) vẫn mang tokenizer
+    # đã mutate — chấp nhận được vì pipeline không tự đọc lại từ đó (xem giải
+    # thích ở chỗ set add_eos_token phía trên).
+    canonical_tok = load_tokenizer(repo_id=args.repo_id, allow_local_fallback=False)
+    canonical_tok.save_pretrained(args.output_dir)
     stats_collector.save(stats_path)   # đảm bảo bản cuối cùng luôn được ghi, kể cả max_steps=nhỏ chưa chạm save_steps nào
 
     if push_to_hub:
