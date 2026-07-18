@@ -50,9 +50,9 @@ def is_sl_valid(
     if not (sl_min_dist_bins <= dist <= sl_max_dist_bins):
         return False
     if action_type == "BUY":
-        return sl_bin < zone.lower_bin   # SL phải nằm dưới đáy zone_support
+        return sl_bin < zone.lower_bin
     if action_type == "SELL":
-        return sl_bin > zone.upper_bin   # SL phải nằm trên đỉnh zone_resistance
+        return sl_bin > zone.upper_bin
     return False
 
 
@@ -61,7 +61,6 @@ def derive_target(entry_bin: int, sl_bin: int, rr: float, direction: str) -> Opt
         target = entry_bin + rr * (entry_bin - sl_bin)
     else:
         target = entry_bin - rr * (sl_bin - entry_bin)
-
     target = round(target)
     if not (BIN_MIN <= target <= BIN_MAX):
         return None
@@ -95,6 +94,7 @@ def forward_test(
 
     return ForwardTestResult(status=OutcomeStatus.TIMEOUT, r_multiple=0.0)
 
+
 def probe_zone_quality(
     zone: ZoneNode,
     future_candles: List[FutureCandle],
@@ -107,12 +107,6 @@ def probe_zone_quality(
     mép còn lại, RR=1 cố định:
       - zone_support:    entry=upper_bin (mép gần giá), SL=lower_bin, long.
       - zone_resistance: entry=lower_bin (mép gần giá), SL=upper_bin, short.
-
-    Nếu zone thật sự bám đúng support/resistance (dựng từ hình học chart
-    thật), phép thử mép-đối-mép này sẽ thắng thường xuyên. Nếu zone bị
-    dựng ẩu chỉ để thoả gate D (vd luôn bao current_price kiểu CONTAINS,
-    không cần chart hỗ trợ gì), phép thử này thắng/thua gần như ngẫu
-    nhiên — không có edge thật để khai thác.
 
     KHÔNG áp is_sl_valid/SL_MIN_DIST_BINS ở đây — đây là 1 probe tổng
     hợp đo chất lượng zone, không phải 1 lệnh thật do model chọn.
@@ -127,6 +121,7 @@ def probe_zone_quality(
         return ForwardTestResult(status=OutcomeStatus.INVALID_SETUP, r_multiple=0.0)
 
     return forward_test(entry, sl, target, future_candles, direction)
+
 
 def counterfactual_outcome(
     action_type: str,
@@ -164,9 +159,6 @@ def evaluate_outcome(
     sl_min_dist_bins: int = SL_MIN_DIST_BINS,
     sl_max_dist_bins: int = SL_MAX_DIST_BINS,
 ) -> Tuple[bool, Optional[ForwardTestResult]]:
-    """sl_min_dist_bins/sl_max_dist_bins: default = module constant (5/10),
-    dùng cho generator.py/demo không đổi gì. GRPO (reward_func.py) truyền
-    tường minh từ RoundConfig hiện tại (app/training/reward/round_config.py)."""
     action_type = action.action_type
 
     if action_type in ("WAIT_BUY", "WAIT_SELL", "HOLD"):

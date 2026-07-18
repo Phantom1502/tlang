@@ -24,15 +24,15 @@ class WeightTable:
         self._default = default
         self._table: Dict[str, Dict[str, float]] = defaultdict(lambda: defaultdict(lambda: self._default))
 
-    def get(self, trend: Optional[str], action_type: Optional[str]) -> float:
+    def get(self, trend, action_type) -> float:
         if trend is None or action_type is None:
             return self._default
         return self._table[trend][action_type]
 
-    def set(self, trend: str, action_type: str, weight: float) -> None:
+    def set(self, trend, action_type, weight) -> None:
         self._table[trend][action_type] = weight
 
-    def set_many(self, updates: Dict[str, Dict[str, float]]) -> None:
+    def set_many(self, updates) -> None:
         for trend, actions in updates.items():
             for action_type, w in actions.items():
                 self.set(trend, action_type, w)
@@ -40,7 +40,7 @@ class WeightTable:
     def reset(self) -> None:
         self._table.clear()
 
-    def snapshot(self) -> Dict[str, Dict[str, float]]:
+    def snapshot(self):
         return {t: dict(a) for t, a in self._table.items()}
 
 
@@ -82,10 +82,9 @@ class StatsCollector:
     def reset(self) -> None:
         self._records.clear()
 
-    def summary(self) -> Dict[str, Dict[str, dict]]:
-        by_trend_total: Dict[str, int] = defaultdict(int)
-        raw: Dict[str, Dict[str, dict]] = defaultdict(lambda: defaultdict(lambda: {"count": 0, "r_multiples": []}))
-
+    def summary(self):
+        by_trend_total = defaultdict(int)
+        raw = defaultdict(lambda: defaultdict(lambda: {"count": 0, "r_multiples": []}))
         for r in self._records:
             if r.trend is None or r.action_type is None:
                 continue
@@ -96,8 +95,7 @@ class StatsCollector:
             entry["count"] += 1
             if r.r_multiple is not None:
                 entry["r_multiples"].append(r.r_multiple)
-
-        result: Dict[str, Dict[str, dict]] = {}
+        result = {}
         for trend, actions in raw.items():
             result[trend] = {}
             total = by_trend_total[trend]
@@ -106,10 +104,8 @@ class StatsCollector:
                 avg_r = sum(rms) / len(rms) if rms else None
                 win_rate = (sum(1 for x in rms if x > 0) / len(rms)) if rms else None
                 result[trend][action_type] = {
-                    "count": entry["count"],
-                    "freq_within_trend": entry["count"] / total if total else 0.0,
-                    "avg_r_multiple": avg_r,
-                    "win_rate": win_rate,
+                    "count": entry["count"], "freq_within_trend": entry["count"] / total if total else 0.0,
+                    "avg_r_multiple": avg_r, "win_rate": win_rate,
                 }
         return result
 
@@ -121,43 +117,25 @@ class StatsCollector:
             for action_type, stat in actions.items():
                 avg_r = f"{stat['avg_r_multiple']:.2f}" if stat["avg_r_multiple"] is not None else "-"
                 win_rate = f"{stat['win_rate'] * 100:.0f}%" if stat["win_rate"] is not None else "-"
-                print(
-                    f"  {action_type:<12} count={stat['count']:<4} "
-                    f"freq={stat['freq_within_trend'] * 100:5.1f}%  avg_R={avg_r:>6}  win_rate={win_rate}"
-                )
+                print(f"  {action_type:<12} count={stat['count']:<4} freq={stat['freq_within_trend']*100:5.1f}%  avg_R={avg_r:>6}  win_rate={win_rate}")
 
-    # ------------------------------------------------------------------
-    # Persistence — cần thiết vì Colab session có thể bị ngắt/chạy lại
-    # NHIỀU LẦN trong CÙNG 1 round. Load-rồi-append: mỗi lần khởi động,
-    # nạp lại records đã dump trước khi log tiếp, để file trên đĩa luôn
-    # phản ánh TOÀN BỘ round tính đến hiện tại, không chỉ session này.
-    # ------------------------------------------------------------------
-    def to_list(self) -> List[Dict[str, Any]]:
+    def to_list(self):
         return [asdict(r) for r in self._records]
 
     def save(self, path: str) -> None:
-        p = Path(path)
-        p.parent.mkdir(parents=True, exist_ok=True)
+        p = Path(path); p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(json.dumps(self.to_list(), ensure_ascii=False), encoding="utf-8")
 
     @classmethod
     def load(cls, path: str) -> "StatsCollector":
-        """Dùng lúc khởi động 1 session MỚI cho round đang chạy dở (Colab bị
-        ngắt) — tiếp tục cộng dồn đúng, không mất thống kê các lần chạy trước
-        trong CÙNG round. File chưa tồn tại (lần đầu của round) -> collector rỗng."""
-        collector = cls()
-        p = Path(path)
+        collector = cls(); p = Path(path)
         if p.exists():
             for d in json.loads(p.read_text(encoding="utf-8")):
                 collector.log(RolloutRecord(**d))
         return collector
 
     @classmethod
-    def merge_from_files(cls, paths: Sequence[str]) -> "StatsCollector":
-        """Gộp nhiều file rank-riêng (multi-GPU, mỗi rank tự dump 1 file theo
-        pattern vd f'{output_dir}/round{N}_stats_rank{rank}.json') thành 1
-        StatsCollector duy nhất — summary() lúc này mới đúng trên TOÀN BỘ
-        round, không chỉ 1 rank. File không tồn tại (rank chưa log gì) -> bỏ qua."""
+    def merge_from_files(cls, paths) -> "StatsCollector":
         collector = cls()
         for path in paths:
             p = Path(path)
@@ -167,7 +145,7 @@ class StatsCollector:
         return collector
 
 
-stats_collector = StatsCollector()   # singleton — reset() giữa các round nếu muốn thống kê rolling
+stats_collector = StatsCollector()
 
 
 def score_completion(
@@ -179,11 +157,10 @@ def score_completion(
 ) -> float:
     weights = weights if weights is not None else weight_table
     round_config = get_active_round_config()
-    future_candles: List[FutureCandle] = [tuple(c) for c in future_bins]  # type: ignore[misc]
+    future_candles: List[FutureCandle] = [tuple(c) for c in future_bins]
 
     parse_result = Parser.from_text(prompt + " " + completion).parse()
 
-    # --- Gate 1: well-form ---
     if not parse_result.is_well_formed():
         if stats is not None:
             program = parse_result.ast
@@ -200,7 +177,6 @@ def score_completion(
     trend = think.trend
     action_type = action.action_type
 
-    # --- Gate 2: semantic (bảng A/B/D/E) + ràng buộc SL/target bổ sung ---
     semantic_result = SemanticChecker(
         zone_width_min_bins=round_config.zone_width_min_bins,
         zone_width_max_bins=round_config.zone_width_max_bins,
@@ -223,19 +199,17 @@ def score_completion(
             ))
         return R_WF_FULL + sem_score
 
-    # --- Gate 3: đã pass gate 2 — "đọ sức giữa các nhánh" ---
-    K = round_config.pass_gate2_bonus # cộng điểm sàn, mọi gen đúng semantic thì đều có điểm
+    K = round_config.pass_gate2_bonus
     base = R_WF_FULL + R_SEM_FULL + K
 
     if action_type == "HOLD":
-        # RANGE không zone — không có gì để đánh giá thêm, chỉ nhận K như mọi nhánh khác.
         reward = base
 
     elif action_type in ("WAIT_BUY", "WAIT_SELL"):
         probe = probe_zone_quality(think.zone, future_candles)
         zone_bonus = round_config.zone_quality_bonus if probe.r_multiple > 0 else 0.0
         reward = base + zone_bonus
-        
+
     elif action_type in ("CANCEL_BUY", "CANCEL_SELL"):
         probe = probe_zone_quality(think.zone, future_candles)
         zone_bonus = round_config.zone_quality_bonus if probe.r_multiple > 0 else 0.0
@@ -261,7 +235,6 @@ def score_completion(
         reward = base + zone_bonus + timing_score
 
     else:
-        # Không nên tới đây nếu gate 1/2 đã pass đúng (action_type nằm ngoài enum đã biết).
         reward = base
 
     if stats is not None:
