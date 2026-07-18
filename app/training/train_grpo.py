@@ -242,6 +242,11 @@ def main() -> None:
     # xem app/tokenizer/hub.py), KHÔNG build lại từ source.
     # ------------------------------------------------------------
     tok = load_tokenizer(repo_id=args.repo_id, allow_local_fallback=False)
+    # Tắt việc tự động thêm EOS khi gọi add_special_tokens=True
+    tok.add_eos_token = False
+
+    # (Tuỳ chọn) Đảm bảo BOS vẫn được thêm
+    tok.add_bos_token = True
     logger.info(f"tokenizer vocab_size = {tok.vocab_size}")
 
     # ------------------------------------------------------------
