@@ -1,7 +1,6 @@
-from huggingface_hub import hf_hub_download
+import pandas as pd
 
-path = hf_hub_download(
-    repo_id="sullivan1502/base-grpo-test",
-    filename="round1_stats_rank0.json",
-)
-print(path)  # vd: ~/.cache/huggingface/hub/models--sullivan1502--base-grpo-test/snapshots/.../round1_stats_rank0.json
+val_file = "data/dataset/grpo/val.parquet"
+
+df = pd.read_parquet(val_file)
+print(df.shape)
