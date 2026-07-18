@@ -87,6 +87,38 @@ def forward_test(
 
     return ForwardTestResult(status=OutcomeStatus.TIMEOUT, r_multiple=0.0)
 
+def probe_zone_quality(
+    zone: ZoneNode,
+    future_candles: List[FutureCandle],
+) -> ForwardTestResult:
+    """
+    Kiểm chứng ĐỘC LẬP chất lượng của zone, tách biệt hoàn toàn khỏi SL/RR/
+    entry mà model thực sự chọn (đó là việc của timing_score ở reward_func.py).
+
+    Phép thử chuẩn hoá: giả lập đặt lệnh ở mép GẦN giá hơn của zone, SL ở
+    mép còn lại, RR=1 cố định:
+      - zone_support:    entry=upper_bin (mép gần giá), SL=lower_bin, long.
+      - zone_resistance: entry=lower_bin (mép gần giá), SL=upper_bin, short.
+
+    Nếu zone thật sự bám đúng support/resistance (dựng từ hình học chart
+    thật), phép thử mép-đối-mép này sẽ thắng thường xuyên. Nếu zone bị
+    dựng ẩu chỉ để thoả gate D (vd luôn bao current_price kiểu CONTAINS,
+    không cần chart hỗ trợ gì), phép thử này thắng/thua gần như ngẫu
+    nhiên — không có edge thật để khai thác.
+
+    KHÔNG áp is_sl_valid/SL_MIN_DIST_BINS ở đây — đây là 1 probe tổng
+    hợp đo chất lượng zone, không phải 1 lệnh thật do model chọn.
+    """
+    if zone.direction == "support":
+        entry, sl, direction = zone.upper_bin, zone.lower_bin, "long"
+    else:  # resistance
+        entry, sl, direction = zone.lower_bin, zone.upper_bin, "short"
+
+    target = derive_target(entry, sl, rr=1.0, direction=direction)
+    if target is None:
+        return ForwardTestResult(status=OutcomeStatus.INVALID_SETUP, r_multiple=0.0)
+
+    return forward_test(entry, sl, target, future_candles, direction)
 
 def counterfactual_outcome(
     action_type: str,

@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from app.lang.parser import Parser
 from app.lang.semantic import SemanticChecker
-from app.training.reward.forward_test import FutureCandle, evaluate_outcome
+from app.training.reward.forward_test import FutureCandle, evaluate_outcome, probe_zone_quality
 from app.training.reward.round_config import RoundConfig
 
 R_WF_FULL = 1.0
@@ -191,19 +191,8 @@ def score_completion(
     stats: Optional[StatsCollector] = None,
     weights: Optional[WeightTable] = None,
 ) -> float:
-    """
-    prompt PHẢI được truyền — grammar (app/lang/parser.py) yêu cầu
-    program := chart_block think_block action_block, chart_block LUÔN
-    đứng đầu. GRPOTrainer (TRL) decode "completions" CHỈ từ token sinh
-    RA SAU prompt (completion_ids), KHÔNG bao gồm chart — nếu parse
-    completion một mình, Parser sẽ LUÔN báo thiếu <chart> (đúng 1 lỗi
-    structural cố định, well_form_score()=0.85 bất kể think/action bên
-    trong đúng hay sai), che gần hết gradient signal thật. Phải ghép lại
-    prompt + completion trước khi parse — đúng convention nối chuỗi đã
-    dùng ở app/training/data/data_module.py (full_text = prompt + " " + completion).
-    """
     weights = weights if weights is not None else weight_table
-    round_config = get_active_round_config()   # fail loud nếu chưa set — xem set_active_round_config()
+    round_config = get_active_round_config()
     future_candles: List[FutureCandle] = [tuple(c) for c in future_bins]  # type: ignore[misc]
 
     parse_result = Parser.from_text(prompt + " " + completion).parse()
@@ -221,19 +210,17 @@ def score_completion(
         return parse_result.well_form_score()
 
     program = parse_result.ast
-    trend = program.think.trend
-    action_type = program.action.action_type
+    think, action = program.think, program.action
+    trend = think.trend
+    action_type = action.action_type
 
     # --- Gate 2: semantic (bảng A/B/D/E) + ràng buộc SL/target bổ sung ---
-    # zone_width/sl_dist range LẤY TỪ round_config hiện tại (KHÔNG dùng
-    # default hardcode của SemanticChecker/evaluate_outcome — round GRPO
-    # luôn phải tường minh, xem round_config.py).
     semantic_result = SemanticChecker(
         zone_width_min_bins=round_config.zone_width_min_bins,
         zone_width_max_bins=round_config.zone_width_max_bins,
     ).check(program)
     extra_valid, forward_result = evaluate_outcome(
-        program.action, program.think, future_candles,
+        action, think, future_candles,
         sl_min_dist_bins=round_config.sl_min_dist_bins,
         sl_max_dist_bins=round_config.sl_max_dist_bins,
     )
@@ -250,22 +237,40 @@ def score_completion(
             ))
         return R_WF_FULL + sem_score
 
-    # --- Gate 3: outcome ---
-    if forward_result is None:
-        if stats is not None:
-            stats.log(RolloutRecord(
-                trend=trend, action_type=action_type, outcome_status=None, r_multiple=None,
-                well_formed=True, semantic_passed=True,
-            ))
-        return R_WF_FULL + R_SEM_FULL
+    # --- Gate 3: đã pass gate 2 — "đọ sức giữa các nhánh" ---
+    K = round_config.pass_gate2_bonus
+    base = R_WF_FULL + R_SEM_FULL + K
 
-    w = weights.get(trend, action_type)
-    reward = R_WF_FULL + R_SEM_FULL + forward_result.r_multiple * w
+    if action_type == "HOLD":
+        # RANGE không zone — không có gì để đánh giá thêm, chỉ nhận K như mọi nhánh khác.
+        reward = base
+
+    elif action_type in ("WAIT_BUY", "WAIT_SELL", "CANCEL_BUY", "CANCEL_SELL"):
+        # Không bấm nút vào lệnh -> KHÔNG có timing_score (kể cả CANCEL, đã bỏ hẳn
+        # counterfactual_outcome riêng — tương đương WAIT về tầng điểm này).
+        # Chỉ chấm chất lượng ZONE bằng probe độc lập, mép-đối-mép, RR=1.
+        probe = probe_zone_quality(think.zone, future_candles)
+        zone_bonus = round_config.zone_quality_bonus if probe.r_multiple > 0 else 0.0
+        reward = base + zone_bonus
+
+    elif action_type in ("BUY", "SELL"):
+        # Có bấm nút -> vừa chấm zone (probe độc lập, KHÔNG dùng SL/RR model chọn)
+        # vừa chấm timing (forward_result — outcome thật với đúng SL/RR/entry model chọn).
+        probe = probe_zone_quality(think.zone, future_candles)
+        zone_bonus = round_config.zone_quality_bonus if probe.r_multiple > 0 else 0.0
+        w = weights.get(trend, action_type)
+        timing_score = forward_result.r_multiple * w
+        reward = base + zone_bonus + timing_score
+
+    else:
+        # Không nên tới đây nếu gate 1/2 đã pass đúng (action_type nằm ngoài enum đã biết).
+        reward = base
 
     if stats is not None:
         stats.log(RolloutRecord(
             trend=trend, action_type=action_type,
-            outcome_status=forward_result.status.value, r_multiple=forward_result.r_multiple,
+            outcome_status=forward_result.status.value if forward_result else None,
+            r_multiple=forward_result.r_multiple if forward_result else None,
             well_formed=True, semantic_passed=True,
         ))
 

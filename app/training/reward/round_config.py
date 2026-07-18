@@ -28,17 +28,55 @@ _REQUIRED_KEYS = (
     "zone_width_max_bins",
     "sl_min_dist_bins",
     "sl_max_dist_bins",
+    "pass_gate2_bonus",      # K — mới
+    "zone_quality_bonus",    # mới
 )
 
 
 @dataclass
 class RoundConfig:
     round_id: str
-    weight_table: Dict[str, Dict[str, float]]   # trend -> action_type -> weight
+    weight_table: Dict[str, Dict[str, float]]
     zone_width_min_bins: int
     zone_width_max_bins: int
     sl_min_dist_bins: int
     sl_max_dist_bins: int
+    pass_gate2_bonus: float      # K — sàn cộng thêm khi pass gate 2, ÁP DỤNG MỌI action
+    zone_quality_bonus: float    # cộng thêm nếu probe_zone_quality thắng (WAIT/CANCEL/BUY/SELL)
+
+    def __post_init__(self) -> None:
+        """
+        Bất biến bắt buộc: K PHẢI lớn hơn max weight trong weight_table
+        của chính round này. Nếu không, 1 completion pass hết well-form +
+        semantic nhưng LOSS (r_multiple=-1, nặng nhất có thể) sẽ có reward
+        THẤP HƠN 1 completion fail semantic nhẹ — phá vỡ đúng nguyên tắc
+        gate cứng (spec mục 5.1: pass gate 2 phải luôn tốt hơn fail gate 2,
+        bất kể outcome ở gate 3 tệ tới đâu).
+
+        reward tệ nhất khi pass gate 2 (BUY/SELL LOSS, zone_bonus=0):
+            R_WF_FULL + R_SEM_FULL + K + 0 + (-1 * w) = 2.0 + K - w
+        reward tệ nhất khi fail gate 2 (0 vi phạm còn lại → fail nhẹ nhất):
+            R_WF_FULL + (R_SEM_FULL - VIOLATION_PENALTY) = 1.0 + 0.8 = 1.8
+        Cần: 2.0 + K - w > 1.8  <=>  K > w - 0.2. Chọn điều kiện CHẶT hơn
+        (an toàn hơn, không phụ thuộc số 0.2 hardcode ở SemanticChecker):
+        K > w  — tự động thoả điều kiện trên với mọi VIOLATION_PENALTY >= 0.
+        """
+        max_w = max(
+            (w for actions in self.weight_table.values() for w in actions.values()),
+            default=0.0,
+        )
+        if self.pass_gate2_bonus <= max_w:
+            raise ValueError(
+                f"pass_gate2_bonus (K={self.pass_gate2_bonus}) phải LỚN HƠN max weight "
+                f"trong weight_table ({max_w}) của round {self.round_id!r} — nếu không, "
+                f"1 completion LOSS (r_multiple=-1) có thể có reward THẤP HƠN 1 completion "
+                f"fail semantic, phá vỡ gate cứng (xem docstring __post_init__)."
+            )
+        if self.zone_quality_bonus < 0:
+            raise ValueError(
+                f"zone_quality_bonus phải >= 0 (chỉ CỘNG khi probe thắng, không bao giờ trừ) "
+                f"— nhận {self.zone_quality_bonus}."
+            )
 
     @classmethod
     def load(cls, path: str) -> "RoundConfig":
@@ -46,8 +84,8 @@ class RoundConfig:
         if not p.exists():
             raise FileNotFoundError(
                 f"Không tìm thấy round config tại {path!r}. Mỗi round GRPO PHẢI có "
-                f"config tường minh (zone/SL range + weight_table) trước khi train — "
-                f"không có giá trị mặc định ngầm cho GRPO (khác generator/demo)."
+                f"config tường minh (zone/SL range + weight_table + K + zone_quality_bonus) "
+                f"trước khi train — không có giá trị mặc định ngầm cho GRPO."
             )
         try:
             data = json.loads(p.read_text(encoding="utf-8"))
@@ -68,6 +106,8 @@ class RoundConfig:
             zone_width_max_bins=int(data["zone_width_max_bins"]),
             sl_min_dist_bins=int(data["sl_min_dist_bins"]),
             sl_max_dist_bins=int(data["sl_max_dist_bins"]),
+            pass_gate2_bonus=float(data["pass_gate2_bonus"]),
+            zone_quality_bonus=float(data["zone_quality_bonus"]),
         )
 
     def save(self, path: str) -> None:
@@ -77,10 +117,6 @@ class RoundConfig:
 
     @classmethod
     def new_default(cls, round_id: str) -> "RoundConfig":
-        """Tiện ích tạo 1 bản khởi điểm (vd cho round 1) — dùng giá trị
-        đang hardcode ở SemanticChecker/forward_test.py làm điểm xuất
-        phát, rồi bạn tay chỉnh file JSON từ đây trở đi. KHÔNG dùng hàm
-        này thay cho load() trong code train — chỉ để bootstrap/CLI."""
         return cls(
             round_id=round_id,
             weight_table={},
@@ -88,4 +124,6 @@ class RoundConfig:
             zone_width_max_bins=20,
             sl_min_dist_bins=5,
             sl_max_dist_bins=10,
+            pass_gate2_bonus=1.5,
+            zone_quality_bonus=0.5,
         )
