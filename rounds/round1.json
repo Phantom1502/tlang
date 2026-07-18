@@ -6,6 +6,7 @@
   "sl_max_dist_bins": 50,
   "pass_gate2_bonus": 1.5,
   "zone_quality_bonus": 0.5,
+  "trade_fee_bins": 0.5,
   "weight_table": {
     "UP":    { "BUY":  1.0, "CANCEL_BUY":  1.0, "WAIT_BUY":  1.0 },
     "DOWN":  { "SELL": 1.0, "CANCEL_SELL": 1.0, "WAIT_SELL": 1.0 },
