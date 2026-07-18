@@ -35,7 +35,7 @@ python -m app.training.train_grpo \
     --logging_steps 10 \
     --max_completion_length 128 \
     \
-    --num_generations 12 \
+    --num_generations 16 \
     \
     --save_steps 50 \
     --save_total_limit 2 \
