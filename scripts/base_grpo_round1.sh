@@ -30,7 +30,7 @@ python -m app.training.train_grpo \
     --gradient_accumulation_steps 4 \
     --learning_rate 1e-6 \
     --warmup_ratio 0.0 \
-    --max_steps 1000 \
+    --max_steps 6000 \
     --num_train_epochs 1 \
     --logging_steps 10 \
     --max_completion_length 128 \

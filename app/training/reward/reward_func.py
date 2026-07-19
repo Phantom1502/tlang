@@ -241,8 +241,6 @@ def score_completion(
                 outcome_status=None, r_multiple=None,
                 well_formed=False, semantic_passed=False,
             ))
-        if round_config.pure_outcome_mode:
-            return 0.0
         return parse_result.well_form_score()
 
     program = parse_result.ast
@@ -289,51 +287,40 @@ def score_completion(
                 outcome_status=None, r_multiple=None,
                 well_formed=True, semantic_passed=False, sl_valid=sl_valid,
             ))
-        if round_config.pure_outcome_mode:
-            return 0.0
         return R_WF_FULL + sem_score
 
     # ==============================================================
     # PASS cả 2 gate — rẽ nhánh theo mode
     # ==============================================================
-    if round_config.pure_outcome_mode:
-        # Round 2: điểm ngữ nghĩa không còn ý nghĩa nữa (đã dùng hết ở round 1)
-        # — mọi mẫu pass gate đều có SÀN TUYỆT ĐỐI = K, không cộng R_WF_FULL/
-        # R_SEM_FULL/zone_bonus/sl_bonus nào cả. Chỉ còn outcome thật quyết định.
-        K = round_config.pass_gate2_bonus
-        w = weights.get(trend, action_type)
-
-        if action_type in ("HOLD", "WAIT_BUY", "WAIT_SELL"):
-            reward = K   # không có outcome để tính — sàn tuyệt đối, không hơn không kém
-
-        elif action_type in ("CANCEL_BUY", "CANCEL_SELL"):
-            reward = K # + forward_result.r_multiple * w bỏ đoạn này, bị hack điểm: model cố tình kéo zone lại gần, rồi đúng ngoài.
-
-        elif action_type in ("BUY", "SELL"):
-            risk_bins = abs(think.current_price_bin - action.sl)
-            fee_in_r = round_config.trade_fee_bins / risk_bins if risk_bins > 0 else 0.0
-            net_r_multiple = forward_result.r_multiple - fee_in_r
-            reward = K + net_r_multiple * w
-
-        else:
-            reward = K
-
-        if stats is not None:
-            stats.log(RolloutRecord(
-                trend=trend, action_type=action_type, intended_action_type=intended_action,
-                outcome_status=forward_result.status.value if forward_result else None,
-                r_multiple=forward_result.r_multiple if forward_result else None,
-                well_formed=True, semantic_passed=True, sl_valid=sl_valid,
-            ))
-        return reward
-
-    # ------------------------------------------------------------
-    # Round 1 pass
-    # ------------------------------------------------------------
+    # Round 2: điểm ngữ nghĩa không còn ý nghĩa nữa (đã dùng hết ở round 1)
+    # — mọi mẫu pass gate đều có SÀN TUYỆT ĐỐI = K, không cộng R_WF_FULL/
+    # R_SEM_FULL/zone_bonus/sl_bonus nào cả. Chỉ còn outcome thật quyết định.
     K = round_config.pass_gate2_bonus
-    base = R_WF_FULL + R_SEM_FULL + K
+    w = weights.get(trend, action_type)
 
-    return base
+    if action_type in ("HOLD", "WAIT_BUY", "WAIT_SELL"):
+        reward = K   # không có outcome để tính — sàn tuyệt đối, không hơn không kém
+
+    elif action_type in ("CANCEL_BUY", "CANCEL_SELL"):
+        reward = K # + forward_result.r_multiple * w bỏ đoạn này, bị hack điểm: model cố tình kéo zone lại gần, rồi đúng ngoài.
+
+    elif action_type in ("BUY", "SELL"):
+        risk_bins = abs(think.current_price_bin - action.sl)
+        fee_in_r = round_config.trade_fee_bins / risk_bins if risk_bins > 0 else 0.0
+        net_r_multiple = forward_result.r_multiple - fee_in_r
+        reward = K + net_r_multiple * w
+
+    else:
+        reward = K
+
+    if stats is not None:
+        stats.log(RolloutRecord(
+            trend=trend, action_type=action_type, intended_action_type=intended_action,
+            outcome_status=forward_result.status.value if forward_result else None,
+            r_multiple=forward_result.r_multiple if forward_result else None,
+            well_formed=True, semantic_passed=True, sl_valid=sl_valid,
+        ))
+    return reward
 
 
 def unified_reward_func(

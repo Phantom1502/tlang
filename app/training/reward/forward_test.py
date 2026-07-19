@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from enum import Enum
 from typing import List, Optional, Tuple
@@ -14,13 +15,22 @@ BIN_MAX = 1023
 
 HORIZON = 50
 
-# Buffer khi mô phỏng SL "ở mép zone" — dùng chung tinh thần với
-# counterfactual_outcome (vốn đã dùng buffer 1 bin cho CANCEL), nhưng
-# TÁCH RIÊNG hằng số vì 2 hàm mô phỏng entry KHÁC NHAU (probe_zone_quality
-# entry = mép zone; counterfactual_outcome entry = giá hiện tại) — không
-# gộp chung 1 hàm, chỉ dùng chung Ý TƯỞNG buffer để không đặt SL đúng y
-# hệt biên zone (dễ bị vi phạm ngay bởi noise 1 bin).
 ZONE_PROBE_SL_BUFFER_BINS = 1
+
+# =====================================================================
+# Partial credit cho case LOSS (SL chạm TRƯỚC target) — thay vì luôn phạt
+# cứng r_multiple=-1.0 bất kể giá đã đi được bao xa favorable trước khi
+# đảo chiều. Với 1 chart cố định (entry/SL cố định, chỉ RR đổi),
+# reward(RR) có dạng "hình chuông": tăng dần khi RR còn trong tầm với
+# thực tế (RR <= MFE thật -> WIN, trả đủ RR), đỉnh tại RR = MFE thật, rồi
+# giảm dần khi RR vượt quá xa MFE (đặt target viển vông) — cho model
+# gradient signal để tự chỉnh RR hợp lý thay vì mọi RR-quá-cao đều lãnh
+# -1 y hệt nhau.
+#
+# LOSS_CREDIT_DECAY_RATE — placeholder, tinh chỉnh sau khi có dữ liệu
+# thực nghiệm GRPO (cùng tinh thần VIOLATION_PENALTY/SEVERITY_PENALTY).
+# =====================================================================
+LOSS_CREDIT_DECAY_RATE = 0.35
 
 FutureCandle = Tuple[int, int, int, int]
 
@@ -44,8 +54,6 @@ def is_sl_valid(
     sl_min_dist_bins: int = SL_MIN_DIST_BINS,
     sl_max_dist_bins: int = SL_MAX_DIST_BINS,
 ) -> bool:
-    """Default = module constant (5/10) — dùng cho generator.py/demo không
-    đổi gì. GRPO (reward_func.py) truyền tường minh từ RoundConfig hiện tại."""
     dist = abs(entry_bin - sl_bin)
     if not (sl_min_dist_bins <= dist <= sl_max_dist_bins):
         return False
@@ -67,6 +75,48 @@ def derive_target(entry_bin: int, sl_bin: int, rr: float, direction: str) -> Opt
     return target
 
 
+# =====================================================================
+# Partial credit cho case LOSS — CHỈ áp dụng nếu MFE (max favorable
+# excursion, tính bằng R, đạt được TRƯỚC nến làm SL bị chạm) đã đạt
+# CHUẨN SÀN >= 1R (tức nếu đã vào lệnh, ít nhất từng lãi được 1R trước
+# khi bị đá ngược). KHÔNG đạt chuẩn sàn này -> phạt thẳng tay -1.0, y hệt
+# hành vi cũ, không có partial credit.
+#
+# Khi đã đạt chuẩn sàn (mfe_r >= 1):
+#   Pha 1 (r > 1):  TUYẾN TÍNH dốc -1 (giống độ dốc bên nhánh WIN),
+#                    r = mfe_r - overshoot
+#   Pha 2 (r <= 1):  DECAY hàm mũ, tiệm cận FLOOR = 0 (không phải -1 nữa
+#                    — vì đã từng đạt chuẩn 1R, "tệ nhất" chỉ là huề vốn,
+#                    không bị coi ngang hàng 1 lệnh thua sạch từ đầu).
+#
+# 2 pha nối liên tục tại overshoot_b = mfe_r - 1 (luôn >= 0 vì mfe_r>=1).
+# =====================================================================
+LOSS_CREDIT_DECAY_RATE = 0.7
+LOSS_CREDIT_MIN_MFE = 1.0   # chuẩn sàn — dưới mức này không có partial credit
+
+
+def _loss_partial_credit(mfe_r: float, rr: float, decay_rate: float = LOSS_CREDIT_DECAY_RATE) -> float:
+    """
+    - mfe_r < LOSS_CREDIT_MIN_MFE (kể cả mfe_r <= 0 — LOSS "sạch" hoặc
+      chưa từng lãi đủ 1R) -> -1.0, phạt thẳng tay, KHÔNG có partial
+      credit — giữ tương thích ngược với case SL chạm ngay nến đầu.
+    - mfe_r >= LOSS_CREDIT_MIN_MFE -> pha 1 tuyến tính (dốc -1, khi giá
+      trị còn > 1), pha 2 decay hàm mũ (khi giá trị đã tụt xuống <= 1),
+      tiệm cận FLOOR = 0 (không phải -1).
+    """
+    if mfe_r < LOSS_CREDIT_MIN_MFE:
+        return -1.0
+
+    overshoot = max(0.0, rr - mfe_r)
+    overshoot_b = mfe_r - 1.0   # overshoot tại đó pha 1 vừa chạm r=1 (>=0 vì mfe_r>=1)
+
+    if overshoot <= overshoot_b:
+        return mfe_r - overshoot   # pha 1 — tuyến tính, dốc -1
+
+    # Pha 2 — decay hàm mũ từ r=1 tại điểm nối, tiệm cận floor=0.
+    return max(0.0, math.exp(-decay_rate * (overshoot - overshoot_b)))
+
+
 def forward_test(
     entry_bin: int,
     sl_bin: int,
@@ -78,6 +128,9 @@ def forward_test(
     if risk == 0:
         return ForwardTestResult(status=OutcomeStatus.INVALID_SETUP, r_multiple=0.0)
 
+    rr = abs(target_bin - entry_bin) / risk
+    mfe_r = 0.0   # max favorable excursion (R) — chỉ cộng dồn từ nến ĐÃ QUA AN TOÀN
+
     for i, (o, h, l, c) in enumerate(future_candles[:HORIZON]):
         if direction == "long":
             hit_sl = l <= sl_bin
@@ -87,10 +140,18 @@ def forward_test(
             hit_tp = l <= target_bin
 
         if hit_sl:
-            return ForwardTestResult(status=OutcomeStatus.LOSS, r_multiple=-1.0, exit_index=i)
+            r_multiple = _loss_partial_credit(mfe_r, rr)
+            return ForwardTestResult(status=OutcomeStatus.LOSS, r_multiple=r_multiple, exit_index=i)
         if hit_tp:
             r_multiple = abs(target_bin - entry_bin) / risk
             return ForwardTestResult(status=OutcomeStatus.WIN, r_multiple=r_multiple, exit_index=i)
+
+        # Nến này KHÔNG chạm SL/TP -> an toàn để cộng dồn MFE. Nến gây
+        # LOSS/WIN (2 nhánh trên) KHÔNG được cộng — nhất quán nguyên tắc
+        # "ưu tiên SL" khi gap 1 nến chạm cả 2 mức (không suy diễn favorable
+        # move đã xảy ra trước trong chính nến đó).
+        candle_r = (h - entry_bin) / risk if direction == "long" else (entry_bin - l) / risk
+        mfe_r = max(mfe_r, candle_r)
 
     return ForwardTestResult(status=OutcomeStatus.TIMEOUT, r_multiple=0.0)
 
@@ -99,21 +160,9 @@ def probe_zone_quality(
     zone: ZoneNode,
     future_candles: List[FutureCandle],
 ) -> ForwardTestResult:
-    """
-    Kiểm chứng ĐỘC LẬP chất lượng của zone, tách biệt hoàn toàn khỏi SL/RR/
-    entry mà model thực sự chọn (đó là việc của timing_score ở reward_func.py).
-
-    Phép thử chuẩn hoá: giả lập đặt lệnh ở mép GẦN giá hơn của zone, SL ở
-    mép còn lại, RR=1 cố định:
-      - zone_support:    entry=upper_bin (mép gần giá), SL=lower_bin, long.
-      - zone_resistance: entry=lower_bin (mép gần giá), SL=upper_bin, short.
-
-    KHÔNG áp is_sl_valid/SL_MIN_DIST_BINS ở đây — đây là 1 probe tổng
-    hợp đo chất lượng zone, không phải 1 lệnh thật do model chọn.
-    """
     if zone.direction == "support":
         entry, sl, direction = zone.upper_bin, zone.lower_bin - ZONE_PROBE_SL_BUFFER_BINS, "long"
-    else:  # resistance
+    else:
         entry, sl, direction = zone.lower_bin, zone.upper_bin + ZONE_PROBE_SL_BUFFER_BINS, "short"
 
     target = derive_target(entry, sl, rr=1.0, direction=direction)
@@ -145,9 +194,20 @@ def counterfactual_outcome(
         return ForwardTestResult(status=OutcomeStatus.INVALID_SETUP, r_multiple=0.0)
 
     result = forward_test(entry, sl, target, future_candles, direction)
+
+    # Chặn ở 0 TRƯỚC khi đảo dấu nếu status=LOSS: sau khi forward_test có
+    # partial credit theo MFE, 1 lệnh LOSS vẫn có thể có r_multiple dương
+    # nhẹ (giá đi gần target rồi đảo chiều). CANCEL một lệnh RỐT CUỘC THUA
+    # luôn là quyết định đúng — không được phép bị phạt chỉ vì nó "suýt
+    # thắng". KHÔNG áp rule này cho WIN (CANCEL 1 lệnh lẽ ra thắng vẫn phải
+    # bị phạt đúng như cũ).
+    raw_r = result.r_multiple
+    if result.status == OutcomeStatus.LOSS:
+        raw_r = min(raw_r, 0.0)
+
     return ForwardTestResult(
         status=result.status,
-        r_multiple=-result.r_multiple,
+        r_multiple=-raw_r,
         exit_index=result.exit_index,
     )
 
