@@ -307,7 +307,7 @@ def score_completion(
     elif action_type in ("BUY", "SELL"):
         risk_bins = abs(think.current_price_bin - action.sl)
         fee_in_r = round_config.trade_fee_bins / risk_bins if risk_bins > 0 else 0.0
-        net_r_multiple = forward_result.r_multiple - fee_in_r
+        net_r_multiple = forward_result.r_multiple - fee_in_r + round_config.buff_action
         reward = K + net_r_multiple * w
 
     else:

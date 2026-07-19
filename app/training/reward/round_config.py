@@ -18,6 +18,7 @@ _REQUIRED_KEYS = (
     "sl_valid_bonus",        # thưởng đối xứng khi SL đúng luật (BUY/SELL)
     "sl_valid_penalty",      # phạt đối xứng khi SL sai luật (BUY/SELL)
     "trade_fee_bins",
+    "buff_action",
 )
 
 # "pure_outcome_mode" CỐ Ý KHÔNG nằm trong _REQUIRED_KEYS — đây là 1 cờ bật/tắt
@@ -41,6 +42,7 @@ class RoundConfig:
     sl_valid_bonus: float
     sl_valid_penalty: float
     trade_fee_bins: float
+    buff_action: float
     pure_outcome_mode: bool = False
 
     def __post_init__(self) -> None:
@@ -92,8 +94,10 @@ class RoundConfig:
             raise ValueError(f"sl_valid_bonus phải >= 0, nhận {self.sl_valid_bonus}.")
         if self.sl_valid_penalty < 0:
             raise ValueError(f"sl_valid_penalty phải >= 0, nhận {self.sl_valid_penalty}.")
-        #if self.trade_fee_bins < 0:
-        #    raise ValueError(f"trade_fee_bins phải >= 0 (phí, không phải bonus), nhận {self.trade_fee_bins}.")
+        if self.trade_fee_bins < 0:
+            raise ValueError(f"trade_fee_bins phải >= 0 (phí, không phải bonus), nhận {self.trade_fee_bins}.")
+        if self.buff_action < 0:
+            raise ValueError(f"buff_action phải >= 0, nhận {self.buff_action}.")
 
     @classmethod
     def load(cls, path: str) -> "RoundConfig":
@@ -117,6 +121,7 @@ class RoundConfig:
             sl_valid_bonus=float(data["sl_valid_bonus"]),
             sl_valid_penalty=float(data["sl_valid_penalty"]),
             trade_fee_bins=float(data["trade_fee_bins"]),
+            buff_action=float(data["buff_action"]),
             pure_outcome_mode=bool(data.get("pure_outcome_mode", False)),
         )
 
