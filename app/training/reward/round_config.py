@@ -92,8 +92,8 @@ class RoundConfig:
             raise ValueError(f"sl_valid_bonus phải >= 0, nhận {self.sl_valid_bonus}.")
         if self.sl_valid_penalty < 0:
             raise ValueError(f"sl_valid_penalty phải >= 0, nhận {self.sl_valid_penalty}.")
-        if self.trade_fee_bins < 0:
-            raise ValueError(f"trade_fee_bins phải >= 0 (phí, không phải bonus), nhận {self.trade_fee_bins}.")
+        #if self.trade_fee_bins < 0:
+        #    raise ValueError(f"trade_fee_bins phải >= 0 (phí, không phải bonus), nhận {self.trade_fee_bins}.")
 
     @classmethod
     def load(cls, path: str) -> "RoundConfig":
