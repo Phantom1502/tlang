@@ -5,13 +5,14 @@
   "sl_min_dist_bins": 5,
   "sl_max_dist_bins": 50,
   "pass_gate2_bonus": 1.5,
-  "zone_quality_bonus": 0.5,
+  "zone_quality_bonus": 0.75,
+  "zone_quality_penalty": 0.75,
   "trade_fee_bins": 0.5,
   "weight_table": {
-    "UP":    { "BUY":  1.0, "CANCEL_BUY":  1.0, "WAIT_BUY":  1.0 },
-    "DOWN":  { "SELL": 1.0, "CANCEL_SELL": 1.0, "WAIT_SELL": 1.0 },
-    "RANGE": { "BUY":  1.0, "CANCEL_BUY":  1.0, "WAIT_BUY":  1.0,
-               "SELL": 1.0, "CANCEL_SELL": 1.0, "WAIT_SELL": 1.0,
-               "HOLD": 1.0 }
+    "UP":    { "BUY": 0.0, "CANCEL_BUY": 0.0, "WAIT_BUY": 0.0 },
+    "DOWN":  { "SELL": 0.0, "CANCEL_SELL": 0.0, "WAIT_SELL": 0.0 },
+    "RANGE": { "BUY": 0.0, "CANCEL_BUY": 0.0, "WAIT_BUY": 0.0,
+               "SELL": 0.0, "CANCEL_SELL": 0.0, "WAIT_SELL": 0.0,
+               "HOLD": 0.0 }
   }
 }

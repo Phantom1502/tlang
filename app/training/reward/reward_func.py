@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from app.lang.parser import Parser
 from app.lang.semantic import SemanticChecker
-from app.training.reward.forward_test import FutureCandle, evaluate_outcome, probe_zone_quality
+from app.training.reward.forward_test import FutureCandle, OutcomeStatus, evaluate_outcome, probe_zone_quality
 from app.training.reward.round_config import RoundConfig
 
 R_WF_FULL = 1.0
@@ -147,6 +147,16 @@ class StatsCollector:
 
 stats_collector = StatsCollector()
 
+def _compute_zone_bonus(probe_result, round_config: RoundConfig) -> float:
+    """Điểm zone-quality có dấu — symmetric bonus/penalty. TIMEOUT/INVALID_SETUP
+    trung tính (0): zone không liên quan đến việc thị trường có đi đủ xa trong
+    horizon hay không, phạt TIMEOUT sẽ đẩy model né các zone hợp lý nhưng chỉ
+    tình cờ đi ngang sau đó — không phải tín hiệu zone thật."""
+    if probe_result.status == OutcomeStatus.WIN:
+        return round_config.zone_quality_bonus
+    if probe_result.status == OutcomeStatus.LOSS:
+        return -round_config.zone_quality_penalty
+    return 0.0
 
 def score_completion(
     prompt: str,
@@ -204,22 +214,22 @@ def score_completion(
 
     if action_type == "HOLD":
         reward = base
-
+        
     elif action_type in ("WAIT_BUY", "WAIT_SELL"):
         probe = probe_zone_quality(think.zone, future_candles)
-        zone_bonus = round_config.zone_quality_bonus if probe.r_multiple > 0 else 0.0
+        zone_bonus = _compute_zone_bonus(probe, round_config)
         reward = base + zone_bonus
 
     elif action_type in ("CANCEL_BUY", "CANCEL_SELL"):
         probe = probe_zone_quality(think.zone, future_candles)
-        zone_bonus = round_config.zone_quality_bonus if probe.r_multiple > 0 else 0.0
+        zone_bonus = _compute_zone_bonus(probe, round_config)
         w = weights.get(trend, action_type)
         timing_score = forward_result.r_multiple * w
         reward = base + zone_bonus + min(0.0, timing_score)
 
     elif action_type in ("BUY", "SELL"):
         probe = probe_zone_quality(think.zone, future_candles)
-        zone_bonus = round_config.zone_quality_bonus if probe.r_multiple > 0 else 0.0
+        zone_bonus = _compute_zone_bonus(probe, round_config)
         w = weights.get(trend, action_type)
 
         # Phí giao dịch kiểu spread — cố định theo BIN (round_config.trade_fee_bins),
