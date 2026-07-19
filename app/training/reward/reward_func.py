@@ -228,6 +228,9 @@ def score_completion(
 
     parse_result = Parser.from_text(prompt + " " + completion).parse()
 
+    # ------------------------------------------------------------
+    # Fail well-form
+    # ------------------------------------------------------------
     if not parse_result.is_well_formed():
         if stats is not None:
             program = parse_result.ast
@@ -238,6 +241,8 @@ def score_completion(
                 outcome_status=None, r_multiple=None,
                 well_formed=False, semantic_passed=False,
             ))
+        if round_config.pure_outcome_mode:
+            return 0.0
         return parse_result.well_form_score()
 
     program = parse_result.ast
@@ -256,18 +261,79 @@ def score_completion(
     )
     overall_semantic_passed = semantic_result.passed and extra_valid
 
+    # ------------------------------------------------------------
+    # sl_valid giờ là 1 PHẦN của semantic score — áp dụng KHÔNG điều kiện
+    # (bất kể phần semantic còn lại pass hay fail), CHỈ có ý nghĩa khi
+    # action_type là BUY/SELL (sl_valid is None cho action khác -> không đổi
+    # gì). Cộng khi đúng luật (dist + đúng phía zone), trừ khi sai — nhưng
+    # KHÔNG gate vào extra_valid/overall_semantic_passed (khác bug cũ đã fix:
+    # SL sai không còn làm mất sạch outcome/mất pass gate 2, chỉ ảnh hưởng
+    # đúng phần điểm số này).
+    # ------------------------------------------------------------
+    sem_score = semantic_result.score
+    if semantic_result.passed and not extra_valid:
+        sem_score = max(0.0, sem_score - EXTRA_SEMANTIC_PENALTY)
+    if sl_valid is True:
+        sem_score += round_config.sl_valid_bonus
+    elif sl_valid is False:
+        sem_score -= round_config.sl_valid_penalty
+    sem_score = max(0.0, sem_score)
+
+    # ------------------------------------------------------------
+    # Fail semantic (bao gồm sl_valid đã gộp ở trên)
+    # ------------------------------------------------------------
     if not overall_semantic_passed:
-        sem_score = semantic_result.score
-        if semantic_result.passed and not extra_valid:
-            sem_score = max(0.0, sem_score - EXTRA_SEMANTIC_PENALTY)
         if stats is not None:
             stats.log(RolloutRecord(
                 trend=trend, action_type=action_type, intended_action_type=intended_action,
                 outcome_status=None, r_multiple=None,
                 well_formed=True, semantic_passed=False, sl_valid=sl_valid,
             ))
+        if round_config.pure_outcome_mode:
+            return 0.0
         return R_WF_FULL + sem_score
 
+    # ==============================================================
+    # PASS cả 2 gate — rẽ nhánh theo mode
+    # ==============================================================
+    if round_config.pure_outcome_mode:
+        # Round 2: điểm ngữ nghĩa không còn ý nghĩa nữa (đã dùng hết ở round 1)
+        # — mọi mẫu pass gate đều có SÀN TUYỆT ĐỐI = K, không cộng R_WF_FULL/
+        # R_SEM_FULL/zone_bonus/sl_bonus nào cả. Chỉ còn outcome thật quyết định.
+        K = round_config.pass_gate2_bonus
+        w = weights.get(trend, action_type)
+
+        if action_type in ("HOLD", "WAIT_BUY", "WAIT_SELL"):
+            reward = K   # không có outcome để tính — sàn tuyệt đối, không hơn không kém
+
+        elif action_type in ("CANCEL_BUY", "CANCEL_SELL"):
+            reward = K + forward_result.r_multiple * w
+
+        elif action_type in ("BUY", "SELL"):
+            risk_bins = abs(think.current_price_bin - action.sl)
+            fee_in_r = round_config.trade_fee_bins / risk_bins if risk_bins > 0 else 0.0
+            net_r_multiple = forward_result.r_multiple - fee_in_r
+            reward = K + net_r_multiple * w
+
+        else:
+            reward = K
+
+        if stats is not None:
+            stats.log(RolloutRecord(
+                trend=trend, action_type=action_type, intended_action_type=intended_action,
+                outcome_status=forward_result.status.value if forward_result else None,
+                r_multiple=forward_result.r_multiple if forward_result else None,
+                well_formed=True, semantic_passed=True, sl_valid=sl_valid,
+            ))
+        return reward
+
+    # ------------------------------------------------------------
+    # Round 1 (mặc định, hành vi cũ) — K + zone_bonus + sl_bonus + timing*w.
+    # sl_valid_bonus/penalty ĐÃ được gộp vào sem_score phía trên; ở nhánh
+    # round1-style base vẫn dùng R_SEM_FULL cố định (không dùng sem_score) —
+    # giữ đúng hành vi gốc, vì round1 không đổi công thức base, chỉ đổi công
+    # thức của nhánh FAIL (nơi sem_score thực sự được dùng).
+    # ------------------------------------------------------------
     K = round_config.pass_gate2_bonus
     base = R_WF_FULL + R_SEM_FULL + K
 
@@ -283,9 +349,6 @@ def score_completion(
         probe = probe_zone_quality(think.zone, future_candles)
         zone_bonus = _compute_zone_bonus(probe, round_config)
         w = weights.get(trend, action_type)
-        # ĐỐI XỨNG — bỏ min(0, ...) trước đây (chỉ trừ, không cộng). Bất đối
-        # xứng cũ triệt tiêu hoàn toàn phần thưởng khi CANCEL đúng (r=+1 ->
-        # min(0,+w)=0), tạo động cơ đẩy phân phối lệch WAIT (xem docs/reward_design.md).
         timing_score = forward_result.r_multiple * w
         reward = base + zone_bonus + timing_score
 
@@ -294,17 +357,15 @@ def score_completion(
         zone_bonus = _compute_zone_bonus(probe, round_config)
         w = weights.get(trend, action_type)
 
-        # sl_valid bonus/penalty — ĐỐI XỨNG, tách khỏi gate outcome (trước đây
-        # SL invalid làm mất hết outcome qua is_sl_valid trong extra_valid,
-        # tạo bias né BUY/SELL — đã fix ở evaluate_outcome).
-        sl_bonus = round_config.sl_valid_bonus if sl_valid else -round_config.sl_valid_penalty
-
+        # sl_valid_bonus/penalty ĐÃ gộp vào sem_score ở trên (áp dụng cho MỌI
+        # mẫu BUY/SELL, kể cả fail semantic) — ở nhánh pass này KHÔNG cộng lại
+        # 1 lần nữa để tránh double-count.
         risk_bins = abs(think.current_price_bin - action.sl)
         fee_in_r = round_config.trade_fee_bins / risk_bins if risk_bins > 0 else 0.0
         net_r_multiple = forward_result.r_multiple - fee_in_r
 
         timing_score = net_r_multiple * w
-        reward = base + zone_bonus + sl_bonus + timing_score
+        reward = base + zone_bonus + timing_score
 
     else:
         reward = base

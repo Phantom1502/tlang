@@ -15,10 +15,16 @@ _REQUIRED_KEYS = (
     "pass_gate2_bonus",      # K
     "zone_quality_bonus",
     "zone_quality_penalty",
-    "sl_valid_bonus",        # MỚI — thưởng đối xứng khi SL đúng luật (BUY/SELL)
-    "sl_valid_penalty",      # MỚI — phạt đối xứng khi SL sai luật (BUY/SELL)
+    "sl_valid_bonus",        # thưởng đối xứng khi SL đúng luật (BUY/SELL)
+    "sl_valid_penalty",      # phạt đối xứng khi SL sai luật (BUY/SELL)
     "trade_fee_bins",
 )
+
+# "pure_outcome_mode" CỐ Ý KHÔNG nằm trong _REQUIRED_KEYS — đây là 1 cờ bật/tắt
+# chế độ, không phải tham số số học. Thiếu field này trong file JSON cũ (vd
+# round1.json đã chạy trước khi field này tồn tại) phải an toàn quay về hành vi
+# gate-3-shaping cũ (K + zone_bonus + sl_bonus + timing*w), KHÔNG fail-loud —
+# khác với 8 field còn lại (số học, thiếu 1 cái là sai lệch âm thầm nếu có default).
 
 
 @dataclass
@@ -35,37 +41,49 @@ class RoundConfig:
     sl_valid_bonus: float
     sl_valid_penalty: float
     trade_fee_bins: float
+    pure_outcome_mode: bool = False
 
     def __post_init__(self) -> None:
         """
-        Bất biến bắt buộc: K PHẢI lớn hơn (zone_quality_penalty + sl_valid_penalty
-        + max weight trong weight_table). Nếu không, 1 completion pass hết
-        well-form + semantic nhưng rơi vào worst-case ở gate 3 (zone LOSS + SL
-        invalid + timing LOSS) sẽ có reward THẤP HƠN 1 completion fail semantic
-        nhẹ — phá vỡ nguyên tắc gate cứng (spec mục 5.1).
+        Bất biến bắt buộc — khác nhau tuỳ mode:
 
-        reward tệ nhất khi pass gate 2 (BUY/SELL LOSS, zone LOSS, SL invalid):
-            R_WF_FULL + R_SEM_FULL + K - zone_quality_penalty - sl_valid_penalty - w
-            = 2.0 + K - zone_quality_penalty - sl_valid_penalty - w
-        reward tệ nhất khi fail gate 2 (fail nhẹ nhất, 1 vi phạm):
-            R_WF_FULL + (R_SEM_FULL - VIOLATION_PENALTY) = 1.0 + 0.8 = 1.8
-        Cần: 2.0 + K - zone_quality_penalty - sl_valid_penalty - w > 1.8
-             <=> K > zone_quality_penalty + sl_valid_penalty + w - 0.2
-        Chọn điều kiện CHẶT hơn (an toàn hơn, không phụ thuộc 0.2 hardcode):
-             K > zone_quality_penalty + sl_valid_penalty + max_w
+        pure_outcome_mode=False (mặc định, hành vi round1 cũ — gate 3 vẫn
+        cộng dồn K + zone_bonus + sl_bonus + timing*w):
+            K phải LỚN HƠN (zone_quality_penalty + sl_valid_penalty + max_w),
+            xem chứng minh đầy đủ ở bản gốc — worst-case pass-gate-2 vẫn phải
+            > worst-case fail-gate-2 nhẹ (1.8).
+
+        pure_outcome_mode=True (round 2 — K là SÀN TUYỆT ĐỐI DUY NHẤT khi pass,
+        fail well-form/semantic = 0.0 thẳng, KHÔNG còn R_WF_FULL/R_SEM_FULL/
+        zone_bonus/sl_bonus nào cộng thêm):
+            reward tệ nhất khi PASS  = K + (-1.0) * max_w   (LOSS thật, r_multiple=-1,
+                                                              bỏ qua fee cho margin chặt hơn)
+            reward khi FAIL          = 0.0
+            Cần: K - max_w > 0  <=>  K > max_w.
         """
         max_w = max(
             (w for actions in self.weight_table.values() for w in actions.values()),
             default=0.0,
         )
-        if self.pass_gate2_bonus <= self.zone_quality_penalty + self.sl_valid_penalty + max_w:
-            raise ValueError(
-                f"pass_gate2_bonus (K={self.pass_gate2_bonus}) phải LỚN HƠN "
-                f"zone_quality_penalty ({self.zone_quality_penalty}) + sl_valid_penalty "
-                f"({self.sl_valid_penalty}) + max weight trong weight_table ({max_w}) của "
-                f"round {self.round_id!r} — nếu không, worst-case pass-gate-2 có thể có "
-                f"reward THẤP HƠN fail-gate-2 nhẹ, phá vỡ gate cứng (xem docstring)."
-            )
+
+        if self.pure_outcome_mode:
+            if self.pass_gate2_bonus <= max_w:
+                raise ValueError(
+                    f"[pure_outcome_mode] pass_gate2_bonus (K={self.pass_gate2_bonus}) phải LỚN HƠN "
+                    f"max weight trong weight_table ({max_w}) của round {self.round_id!r} — nếu không, "
+                    f"1 completion pass gate với outcome LOSS (r_multiple=-1) có thể có reward <= 0, "
+                    f"bằng hoặc thấp hơn reward fail gate (luôn = 0.0 ở mode này), phá vỡ gate cứng."
+                )
+        else:
+            if self.pass_gate2_bonus <= self.zone_quality_penalty + self.sl_valid_penalty + max_w:
+                raise ValueError(
+                    f"pass_gate2_bonus (K={self.pass_gate2_bonus}) phải LỚN HƠN "
+                    f"zone_quality_penalty ({self.zone_quality_penalty}) + sl_valid_penalty "
+                    f"({self.sl_valid_penalty}) + max weight trong weight_table ({max_w}) của "
+                    f"round {self.round_id!r} — nếu không, worst-case pass-gate-2 có thể có "
+                    f"reward THẤP HƠN fail-gate-2 nhẹ, phá vỡ gate cứng (xem docstring)."
+                )
+
         if self.zone_quality_bonus < 0:
             raise ValueError(f"zone_quality_bonus phải >= 0, nhận {self.zone_quality_bonus}.")
         if self.zone_quality_penalty < 0:
@@ -99,6 +117,7 @@ class RoundConfig:
             sl_valid_bonus=float(data["sl_valid_bonus"]),
             sl_valid_penalty=float(data["sl_valid_penalty"]),
             trade_fee_bins=float(data["trade_fee_bins"]),
+            pure_outcome_mode=bool(data.get("pure_outcome_mode", False)),
         )
 
     def save(self, path: str) -> None:

@@ -1,0 +1,21 @@
+{
+  "round_id": "round2",
+  "zone_width_min_bins": 5,
+  "zone_width_max_bins": 50,
+  "sl_min_dist_bins": 5,
+  "sl_max_dist_bins": 50,
+  "pass_gate2_bonus": 1.5,
+  "zone_quality_bonus": 0.0,
+  "zone_quality_penalty": 0.0,
+  "sl_valid_bonus": 0.0,
+  "sl_valid_penalty": 0.0,
+  "trade_fee_bins": 0.0,
+  "pure_outcome_mode": true,
+  "weight_table": {
+    "UP":    { "BUY": 0.3, "CANCEL_BUY": 0.3, "WAIT_BUY": 0.3 },
+    "DOWN":  { "SELL": 0.3, "CANCEL_SELL": 0.3, "WAIT_SELL": 0.3 },
+    "RANGE": { "BUY": 0.3, "CANCEL_BUY": 0.3, "WAIT_BUY": 0.3,
+               "SELL": 0.3, "CANCEL_SELL": 0.3, "WAIT_SELL": 0.3,
+               "HOLD": 0.3 }
+  }
+}
