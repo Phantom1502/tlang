@@ -163,14 +163,15 @@ def evaluate_outcome(
     Trả về (extra_valid, forward_result, sl_valid).
 
     extra_valid: setup có TÍNH ĐƯỢC hay không (thiếu zone/sl/rr, hoặc target
-    bị bão hoà bin [0,1023]) — đây vẫn là lỗi cứng, không có gì để forward-test.
+    bị bão hoà bin [0,1023]) — lỗi cứng thật sự, không có gì để forward-test.
     KHÔNG còn phụ thuộc is_sl_valid — SL sai khoảng cách/sai phía zone vẫn
-    tính được target bình thường (chỉ là phép trừ/cộng bin), nên vẫn chạy
-    forward_test thật để lấy tín hiệu outcome — không vứt bỏ nữa.
+    tính target bình thường (chỉ là phép cộng/trừ bin), vẫn chạy forward_test
+    thật để lấy tín hiệu outcome thay vì vứt bỏ toàn bộ (bug đã fix — trước
+    đây SL invalid làm mất hết outcome, tạo bias né BUY/SELL).
 
-    sl_valid: chỉ có ý nghĩa với BUY/SELL — None cho các action khác. Dùng ở
+    sl_valid: chỉ có ý nghĩa với BUY/SELL — None cho action khác. Dùng ở
     reward_func.py để cộng/trừ ĐỐI XỨNG (giống zone_quality_bonus/penalty),
-    KHÔNG dùng để gate outcome nữa.
+    KHÔNG dùng để gate outcome.
     """
     action_type = action.action_type
 
@@ -188,7 +189,7 @@ def evaluate_outcome(
         direction = "long" if action_type == "BUY" else "short"
         target = derive_target(think.current_price_bin, action.sl, action.rr, direction)
         if target is None:
-            return False, None, sl_valid   # bin bão hoà — vẫn là lỗi cứng thật sự, không liên quan is_sl_valid
+            return False, None, sl_valid   # bin bão hoà — lỗi cứng thật, độc lập với is_sl_valid
         result = forward_test(think.current_price_bin, action.sl, target, future_candles, direction)
         return True, result, sl_valid
 

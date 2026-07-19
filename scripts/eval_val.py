@@ -154,7 +154,7 @@ def evaluate_batch(
         # và bao gồm luôn is_sl_valid (khoảng cách SL + đúng phía zone) cho BUY/SELL
         # — đây là ràng buộc "extra semantic" nằm ngoài bảng A/B/D/E của SemanticChecker
         # (xem docs/spec_trading_llm_v0.2.md mục 6.1), nên phải AND lại với sem_result.passed.
-        extra_valid, forward_result, _ = evaluate_outcome(
+        extra_valid, forward_result, sl_valid = evaluate_outcome(
             action, think, [tuple(c) for c in row["future_bins"]],
             sl_min_dist_bins=sl_min_dist_bins, sl_max_dist_bins=sl_max_dist_bins,
         )

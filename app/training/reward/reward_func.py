@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -17,6 +18,23 @@ R_SEM_FULL = 1.0
 EXTRA_SEMANTIC_PENALTY = SemanticChecker.VIOLATION_PENALTY
 
 DEFAULT_WEIGHT = 1.0
+
+# =====================================================================
+# Best-effort "ý định" của model, đọc trực tiếp trên raw completion text —
+# KHÔNG cần parse thành công. Dùng để tách "model chọn action X" khỏi
+# "model định làm X nhưng sinh sai cú pháp" (2 nguyên nhân hoàn toàn khác
+# nhau khi đọc lệch tần suất trong StatsCollector — xem docs/reward_design.md
+# mục "intended vs realized action").
+# =====================================================================
+_ACTION_TYPE_RE = re.compile(r"\b(CANCEL_BUY|CANCEL_SELL|WAIT_BUY|WAIT_SELL|BUY|SELL|HOLD)\b")
+
+
+def _extract_intended_action(completion: str) -> Optional[str]:
+    """Token ACTION_TYPE đầu tiên xuất hiện trong completion, bất kể completion
+    có well-formed hay không — best-effort, không dùng để tính reward, CHỈ
+    dùng cho thống kê."""
+    m = _ACTION_TYPE_RE.search(completion)
+    return m.group(1) if m else None
 
 
 class WeightTable:
@@ -65,11 +83,13 @@ def get_active_round_config() -> RoundConfig:
 @dataclass
 class RolloutRecord:
     trend: Optional[str]
-    action_type: Optional[str]
+    action_type: Optional[str]              # action_type SAU parse — None nếu well-form fail
+    intended_action_type: Optional[str]     # MỚI — regex thô trên raw completion, có ngay cả khi well-form fail
     outcome_status: Optional[str]
     r_multiple: Optional[float]
     well_formed: bool
     semantic_passed: bool
+    sl_valid: Optional[bool] = None         # MỚI — chỉ có ý nghĩa với BUY/SELL
 
 
 class StatsCollector:
@@ -83,6 +103,9 @@ class StatsCollector:
         self._records.clear()
 
     def summary(self):
+        """Thống kê theo action_type SAU parse — chỉ record well_formed+semantic_passed.
+        Dùng để đọc outcome/timing thật, KHÔNG dùng để đọc tần suất ý định (xem
+        summary_by_intended_action bên dưới cho việc đó)."""
         by_trend_total = defaultdict(int)
         raw = defaultdict(lambda: defaultdict(lambda: {"count": 0, "r_multiples": []}))
         for r in self._records:
@@ -109,15 +132,48 @@ class StatsCollector:
                 }
         return result
 
+    def summary_by_intended_action(self) -> Dict[str, Dict[str, Any]]:
+        """Well-form rate theo Ý ĐỊNH (intended_action_type, có ngay cả khi
+        parse fail) — tách 'model chọn action X nhiều hơn' khỏi 'action X dễ
+        sinh sai cú pháp hơn nên bị lọc rớt nhiều hơn ở summary() thường.
+
+        So sánh well_form_rate giữa 2 action cùng nhóm (vd BUY vs CANCEL_BUY):
+          - Nếu xấp xỉ nhau -> lệch tần suất trong summary() là hành vi thật.
+          - Nếu lệch rõ (vd BUY << CANCEL_BUY) -> phần lớn lệch trong
+            summary() là nhiễu cú pháp (BUY cần sinh thêm SL+RR, nhiều cơ hội
+            sai hơn) — vấn đề thuộc SFT/generator, KHÔNG phải reward design.
+        """
+        counts: Dict[str, Dict[str, int]] = defaultdict(lambda: {"total": 0, "well_formed": 0})
+        for r in self._records:
+            if r.intended_action_type is None:
+                continue
+            entry = counts[r.intended_action_type]
+            entry["total"] += 1
+            if r.well_formed:
+                entry["well_formed"] += 1
+        return {
+            action: {
+                "total": e["total"],
+                "well_formed": e["well_formed"],
+                "well_form_rate": e["well_formed"] / e["total"] if e["total"] else 0.0,
+            }
+            for action, e in counts.items()
+        }
+
     def print_summary(self) -> None:
         summary = self.summary()
-        print("=== Rollout stats (trend -> action) ===")
+        print("=== Rollout stats (trend -> action, chỉ well-formed + semantic pass) ===")
         for trend, actions in summary.items():
             print(f"trend={trend}")
             for action_type, stat in actions.items():
                 avg_r = f"{stat['avg_r_multiple']:.2f}" if stat["avg_r_multiple"] is not None else "-"
                 win_rate = f"{stat['win_rate'] * 100:.0f}%" if stat["win_rate"] is not None else "-"
                 print(f"  {action_type:<12} count={stat['count']:<4} freq={stat['freq_within_trend']*100:5.1f}%  avg_R={avg_r:>6}  win_rate={win_rate}")
+
+        print("\n=== Well-form rate theo Ý ĐỊNH (intended_action_type — kể cả parse fail) ===")
+        intended = self.summary_by_intended_action()
+        for action, stat in sorted(intended.items()):
+            print(f"  {action:<12} total={stat['total']:<6} well_formed={stat['well_formed']:<6} rate={stat['well_form_rate']*100:5.1f}%")
 
     def to_list(self):
         return [asdict(r) for r in self._records]
@@ -147,16 +203,16 @@ class StatsCollector:
 
 stats_collector = StatsCollector()
 
+
 def _compute_zone_bonus(probe_result, round_config: RoundConfig) -> float:
     """Điểm zone-quality có dấu — symmetric bonus/penalty. TIMEOUT/INVALID_SETUP
-    trung tính (0): zone không liên quan đến việc thị trường có đi đủ xa trong
-    horizon hay không, phạt TIMEOUT sẽ đẩy model né các zone hợp lý nhưng chỉ
-    tình cờ đi ngang sau đó — không phải tín hiệu zone thật."""
+    trung tính (0)."""
     if probe_result.status == OutcomeStatus.WIN:
         return round_config.zone_quality_bonus
     if probe_result.status == OutcomeStatus.LOSS:
         return -round_config.zone_quality_penalty
     return 0.0
+
 
 def score_completion(
     prompt: str,
@@ -168,6 +224,7 @@ def score_completion(
     weights = weights if weights is not None else weight_table
     round_config = get_active_round_config()
     future_candles: List[FutureCandle] = [tuple(c) for c in future_bins]
+    intended_action = _extract_intended_action(completion)
 
     parse_result = Parser.from_text(prompt + " " + completion).parse()
 
@@ -177,6 +234,7 @@ def score_completion(
             stats.log(RolloutRecord(
                 trend=program.think.trend if program and program.think else None,
                 action_type=program.action.action_type if program and program.action else None,
+                intended_action_type=intended_action,
                 outcome_status=None, r_multiple=None,
                 well_formed=False, semantic_passed=False,
             ))
@@ -204,8 +262,9 @@ def score_completion(
             sem_score = max(0.0, sem_score - EXTRA_SEMANTIC_PENALTY)
         if stats is not None:
             stats.log(RolloutRecord(
-                trend=trend, action_type=action_type, outcome_status=None, r_multiple=None,
-                well_formed=True, semantic_passed=False,
+                trend=trend, action_type=action_type, intended_action_type=intended_action,
+                outcome_status=None, r_multiple=None,
+                well_formed=True, semantic_passed=False, sl_valid=sl_valid,
             ))
         return R_WF_FULL + sem_score
 
@@ -214,7 +273,7 @@ def score_completion(
 
     if action_type == "HOLD":
         reward = base
-        
+
     elif action_type in ("WAIT_BUY", "WAIT_SELL"):
         probe = probe_zone_quality(think.zone, future_candles)
         zone_bonus = _compute_zone_bonus(probe, round_config)
@@ -224,21 +283,22 @@ def score_completion(
         probe = probe_zone_quality(think.zone, future_candles)
         zone_bonus = _compute_zone_bonus(probe, round_config)
         w = weights.get(trend, action_type)
+        # ĐỐI XỨNG — bỏ min(0, ...) trước đây (chỉ trừ, không cộng). Bất đối
+        # xứng cũ triệt tiêu hoàn toàn phần thưởng khi CANCEL đúng (r=+1 ->
+        # min(0,+w)=0), tạo động cơ đẩy phân phối lệch WAIT (xem docs/reward_design.md).
         timing_score = forward_result.r_multiple * w
-        reward = base + zone_bonus + min(0.0, timing_score)
+        reward = base + zone_bonus + timing_score
 
     elif action_type in ("BUY", "SELL"):
         probe = probe_zone_quality(think.zone, future_candles)
         zone_bonus = _compute_zone_bonus(probe, round_config)
         w = weights.get(trend, action_type)
 
+        # sl_valid bonus/penalty — ĐỐI XỨNG, tách khỏi gate outcome (trước đây
+        # SL invalid làm mất hết outcome qua is_sl_valid trong extra_valid,
+        # tạo bias né BUY/SELL — đã fix ở evaluate_outcome).
         sl_bonus = round_config.sl_valid_bonus if sl_valid else -round_config.sl_valid_penalty
-        
-        # Phí giao dịch kiểu spread — cố định theo BIN (round_config.trade_fee_bins),
-        # quy đổi ra R-multiple theo risk CỦA CHÍNH lệnh này (risk_bins = |entry-SL|),
-        # giống spread ảnh hưởng R nhiều hơn khi SL đặt sát (risk nhỏ). CHỈ áp cho
-        # BUY/SELL thật (vào lệnh thật) — CANCEL/WAIT/HOLD không trả phí vì không
-        # thật sự có vị thế nào được mở.
+
         risk_bins = abs(think.current_price_bin - action.sl)
         fee_in_r = round_config.trade_fee_bins / risk_bins if risk_bins > 0 else 0.0
         net_r_multiple = forward_result.r_multiple - fee_in_r
@@ -251,10 +311,10 @@ def score_completion(
 
     if stats is not None:
         stats.log(RolloutRecord(
-            trend=trend, action_type=action_type,
+            trend=trend, action_type=action_type, intended_action_type=intended_action,
             outcome_status=forward_result.status.value if forward_result else None,
             r_multiple=forward_result.r_multiple if forward_result else None,
-            well_formed=True, semantic_passed=True,
+            well_formed=True, semantic_passed=True, sl_valid=sl_valid,
         ))
 
     return reward
