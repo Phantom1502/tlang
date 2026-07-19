@@ -327,57 +327,6 @@ def score_completion(
             ))
         return reward
 
-    # ------------------------------------------------------------
-    # Round 1 (mặc định, hành vi cũ) — K + zone_bonus + sl_bonus + timing*w.
-    # sl_valid_bonus/penalty ĐÃ được gộp vào sem_score phía trên; ở nhánh
-    # round1-style base vẫn dùng R_SEM_FULL cố định (không dùng sem_score) —
-    # giữ đúng hành vi gốc, vì round1 không đổi công thức base, chỉ đổi công
-    # thức của nhánh FAIL (nơi sem_score thực sự được dùng).
-    # ------------------------------------------------------------
-    K = round_config.pass_gate2_bonus
-    base = R_WF_FULL + R_SEM_FULL + K
-
-    if action_type == "HOLD":
-        reward = base
-
-    elif action_type in ("WAIT_BUY", "WAIT_SELL"):
-        probe = probe_zone_quality(think.zone, future_candles)
-        zone_bonus = _compute_zone_bonus(probe, round_config)
-        reward = base + zone_bonus
-
-    elif action_type in ("CANCEL_BUY", "CANCEL_SELL"):
-        probe = probe_zone_quality(think.zone, future_candles)
-        zone_bonus = _compute_zone_bonus(probe, round_config)
-        w = weights.get(trend, action_type)
-        timing_score = forward_result.r_multiple * w
-        reward = base + zone_bonus + timing_score
-
-    elif action_type in ("BUY", "SELL"):
-        probe = probe_zone_quality(think.zone, future_candles)
-        zone_bonus = _compute_zone_bonus(probe, round_config)
-        w = weights.get(trend, action_type)
-
-        # sl_valid_bonus/penalty ĐÃ gộp vào sem_score ở trên (áp dụng cho MỌI
-        # mẫu BUY/SELL, kể cả fail semantic) — ở nhánh pass này KHÔNG cộng lại
-        # 1 lần nữa để tránh double-count.
-        risk_bins = abs(think.current_price_bin - action.sl)
-        fee_in_r = round_config.trade_fee_bins / risk_bins if risk_bins > 0 else 0.0
-        net_r_multiple = forward_result.r_multiple - fee_in_r
-
-        timing_score = net_r_multiple * w
-        reward = base + zone_bonus + timing_score
-
-    else:
-        reward = base
-
-    if stats is not None:
-        stats.log(RolloutRecord(
-            trend=trend, action_type=action_type, intended_action_type=intended_action,
-            outcome_status=forward_result.status.value if forward_result else None,
-            r_multiple=forward_result.r_multiple if forward_result else None,
-            well_formed=True, semantic_passed=True, sl_valid=sl_valid,
-        ))
-
     return reward
 
 
