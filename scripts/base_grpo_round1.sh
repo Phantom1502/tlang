@@ -18,7 +18,7 @@ set -euo pipefail
 python -m app.training.train_grpo \
     --model_size base \
     --round_id round1 \
-    --repo_id "sullivan1502/base-grpo-test" \
+    --repo_id "sullivan1502/base-grpo-round1" \
     --init_from_repo "sullivan1502/base-sft" \
     --round_config "./rounds/round1.json" \
     \
@@ -30,7 +30,7 @@ python -m app.training.train_grpo \
     --gradient_accumulation_steps 4 \
     --learning_rate 1e-6 \
     --warmup_ratio 0.0 \
-    --max_steps 6000 \
+    --max_steps 1000 \
     --num_train_epochs 1 \
     --logging_steps 10 \
     --max_completion_length 128 \
