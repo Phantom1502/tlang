@@ -273,7 +273,7 @@ def generate_one(
         if not sem_result.passed:
             continue
         if action_type in ("BUY", "SELL", "CANCEL_BUY", "CANCEL_SELL"):
-            extra_valid, _ = evaluate_outcome(parse_result.ast.action, parse_result.ast.think, candles)
+            extra_valid, _, _ = evaluate_outcome(parse_result.ast.action, parse_result.ast.think, candles)
             if not extra_valid:
                 continue
 

@@ -191,7 +191,7 @@ def score_completion(
         zone_width_min_bins=round_config.zone_width_min_bins,
         zone_width_max_bins=round_config.zone_width_max_bins,
     ).check(program)
-    extra_valid, forward_result = evaluate_outcome(
+    extra_valid, forward_result, sl_valid = evaluate_outcome(
         action, think, future_candles,
         sl_min_dist_bins=round_config.sl_min_dist_bins,
         sl_max_dist_bins=round_config.sl_max_dist_bins,
@@ -232,6 +232,8 @@ def score_completion(
         zone_bonus = _compute_zone_bonus(probe, round_config)
         w = weights.get(trend, action_type)
 
+        sl_bonus = round_config.sl_valid_bonus if sl_valid else -round_config.sl_valid_penalty
+        
         # Phí giao dịch kiểu spread — cố định theo BIN (round_config.trade_fee_bins),
         # quy đổi ra R-multiple theo risk CỦA CHÍNH lệnh này (risk_bins = |entry-SL|),
         # giống spread ảnh hưởng R nhiều hơn khi SL đặt sát (risk nhỏ). CHỈ áp cho
@@ -242,7 +244,7 @@ def score_completion(
         net_r_multiple = forward_result.r_multiple - fee_in_r
 
         timing_score = net_r_multiple * w
-        reward = base + zone_bonus + timing_score
+        reward = base + zone_bonus + sl_bonus + timing_score
 
     else:
         reward = base

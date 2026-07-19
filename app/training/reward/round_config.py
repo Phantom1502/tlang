@@ -15,6 +15,8 @@ _REQUIRED_KEYS = (
     "pass_gate2_bonus",      # K
     "zone_quality_bonus",
     "zone_quality_penalty",  # MỚI — phạt khi probe_zone_quality LOSS, symmetric với bonus
+    "sl_valid_bonus", 
+    "sl_valid_penalty",   # MỚI
     "trade_fee_bins",
 )
 
@@ -30,6 +32,8 @@ class RoundConfig:
     pass_gate2_bonus: float
     zone_quality_bonus: float
     zone_quality_penalty: float   # MỚI — trừ khi probe LOSS (WIN/LOSS symmetric, TIMEOUT trung tính)
+    sl_valid_bonus: float
+    sl_valid_penalty: float
     trade_fee_bins: float
 
     def __post_init__(self) -> None:
@@ -75,6 +79,10 @@ class RoundConfig:
                 f"zone_quality_penalty phải >= 0 (độ lớn phạt, dấu trừ áp ở reward_func.py, "
                 f"không tự mang dấu âm ở đây) — nhận {self.zone_quality_penalty}."
             )
+        if self.sl_valid_bonus < 0:
+            raise ValueError("sl_valid_bonus phải >= 0")
+        if self.sl_valid_penalty < 0:
+            raise ValueError("sl_valid_penalty phải >= 0")
         if self.trade_fee_bins < 0:
             raise ValueError(f"trade_fee_bins phải >= 0 (phí, không phải bonus), nhận {self.trade_fee_bins}.")
 
@@ -97,6 +105,8 @@ class RoundConfig:
             pass_gate2_bonus=float(data["pass_gate2_bonus"]),
             zone_quality_bonus=float(data["zone_quality_bonus"]),
             zone_quality_penalty=float(data["zone_quality_penalty"]),
+            sl_valid_bonus=float(data["sl_valid_bonus"]),
+            sl_valid_penalty=float(data["sl_valid_penalty"]),
             trade_fee_bins=float(data["trade_fee_bins"]),
         )
 
