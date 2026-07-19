@@ -302,7 +302,7 @@ def score_completion(
         reward = K   # không có outcome để tính — sàn tuyệt đối, không hơn không kém
 
     elif action_type in ("CANCEL_BUY", "CANCEL_SELL"):
-        reward = K - 0.1 # + forward_result.r_multiple * w bỏ đoạn này, bị hack điểm: model cố tình kéo zone lại gần, rồi đứng ngoài.
+        reward = K - 0.5 # Nếu BUY/SELL ko kéo nổi lên thì có nghĩa là zone này tệ
 
     elif action_type in ("BUY", "SELL"):
         risk_bins = abs(think.current_price_bin - action.sl)
