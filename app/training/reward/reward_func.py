@@ -327,7 +327,17 @@ def score_completion(
             ))
         return reward
 
-    return reward
+    # ------------------------------------------------------------
+    # Round 1 (mặc định, hành vi cũ) — K + zone_bonus + sl_bonus + timing*w.
+    # sl_valid_bonus/penalty ĐÃ được gộp vào sem_score phía trên; ở nhánh
+    # round1-style base vẫn dùng R_SEM_FULL cố định (không dùng sem_score) —
+    # giữ đúng hành vi gốc, vì round1 không đổi công thức base, chỉ đổi công
+    # thức của nhánh FAIL (nơi sem_score thực sự được dùng).
+    # ------------------------------------------------------------
+    K = round_config.pass_gate2_bonus
+    base = R_WF_FULL + R_SEM_FULL + K
+
+    return base
 
 
 def unified_reward_func(
