@@ -155,6 +155,58 @@ def forward_test(
 
     return ForwardTestResult(status=OutcomeStatus.TIMEOUT, r_multiple=0.0)
 
+# =====================================================================
+# BẢN "OUTCOME THẬT" — dùng cho scripts/eval_val.py (đo P&L thật để báo
+# cáo win_rate/avg_R), KHÔNG dùng cho reward GRPO (forward_test() ở trên
+# vẫn giữ nguyên, có partial-credit/shaping — đó là tín hiệu train, không
+# phải P&L thật).
+#
+# Khác biệt duy nhất so với forward_test():
+#   - LOSS (chạm SL trước): r_multiple = -1.0 CỐ ĐỊNH, không partial credit.
+#   - WIN  (chạm target trước): giống hệt — r_multiple = +rr thật.
+#   - TIMEOUT (hết horizon không chạm gì): KHÔNG gán cứng 0 — mark-to-market
+#     tại giá Close của nến CUỐI CÙNG trong horizon đã xét, đúng P&L nếu
+#     phải đóng lệnh tại thời điểm đó.
+# =====================================================================
+def true_forward_test(
+    entry_bin: int,
+    sl_bin: int,
+    target_bin: int,
+    future_candles: List[FutureCandle],
+    direction: str,
+) -> ForwardTestResult:
+    risk = abs(entry_bin - sl_bin)
+    if risk == 0:
+        return ForwardTestResult(status=OutcomeStatus.INVALID_SETUP, r_multiple=0.0)
+
+    rr = abs(target_bin - entry_bin) / risk
+    last_close: Optional[int] = None
+
+    for i, (o, h, l, c) in enumerate(future_candles[:HORIZON]):
+        if direction == "long":
+            hit_sl = l <= sl_bin
+            hit_tp = h >= target_bin
+        else:
+            hit_sl = h >= sl_bin
+            hit_tp = l <= target_bin
+
+        if hit_sl:
+            return ForwardTestResult(status=OutcomeStatus.LOSS, r_multiple=-1.0, exit_index=i)
+        if hit_tp:
+            return ForwardTestResult(status=OutcomeStatus.WIN, r_multiple=rr, exit_index=i)
+
+        last_close = c
+
+    if last_close is None:
+        # future_candles rỗng — không có gì để mark-to-market.
+        return ForwardTestResult(status=OutcomeStatus.TIMEOUT, r_multiple=0.0)
+
+    if direction == "long":
+        r_multiple = (last_close - entry_bin) / risk
+    else:
+        r_multiple = (entry_bin - last_close) / risk
+
+    return ForwardTestResult(status=OutcomeStatus.TIMEOUT, r_multiple=r_multiple)
 
 def probe_zone_quality(
     zone: ZoneNode,
@@ -260,3 +312,64 @@ def evaluate_outcome(
         return True, result, None
 
     return False, None, None
+
+def _evaluate_outcome_impl(
+    action: ActionNode,
+    think: ThinkNode,
+    future_candles: List[FutureCandle],
+    sl_min_dist_bins: int,
+    sl_max_dist_bins: int,
+    forward_fn,
+    counterfactual_fn=None,   # None -> CANCEL_BUY/CANCEL_SELL coi như không có outcome (giống WAIT/HOLD)
+) -> Tuple[bool, Optional[ForwardTestResult], Optional[bool]]:
+    """Logic gate DÙNG CHUNG cho evaluate_outcome() (reward, có shaping) và
+    evaluate_true_outcome() (eval, P&L thật) — chỉ khác forward_fn/
+    counterfactual_fn truyền vào. Sửa gate ở đây, cả 2 nơi ăn theo."""
+    action_type = action.action_type
+
+    if action_type in ("WAIT_BUY", "WAIT_SELL", "HOLD"):
+        return True, None, None
+
+    if action_type in ("BUY", "SELL"):
+        if think.zone is None or action.sl is None or action.rr is None:
+            return False, None, None
+
+        sl_valid = is_sl_valid(
+            action_type, think.current_price_bin, action.sl, think.zone,
+            sl_min_dist_bins, sl_max_dist_bins,
+        )
+        direction = "long" if action_type == "BUY" else "short"
+        target = derive_target(think.current_price_bin, action.sl, action.rr, direction)
+        if target is None:
+            return False, None, sl_valid
+        result = forward_fn(think.current_price_bin, action.sl, target, future_candles, direction)
+        return True, result, sl_valid
+
+    if action_type in ("CANCEL_BUY", "CANCEL_SELL"):
+        if think.zone is None:
+            return False, None, None
+        if counterfactual_fn is None:
+            # Eval thật: không suy đoán phản-thực, chỉ cần biết setup hợp lệ
+            # để đếm vào thống kê (well-form/semantic pass) — không có outcome.
+            return True, None, None
+        result = counterfactual_fn(action_type, think.zone, think.current_price_bin, future_candles)
+        return True, result, None
+
+    return False, None, None
+
+def evaluate_true_outcome(
+    action: ActionNode,
+    think: ThinkNode,
+    future_candles: List[FutureCandle],
+    sl_min_dist_bins: int = SL_MIN_DIST_BINS,
+    sl_max_dist_bins: int = SL_MAX_DIST_BINS,
+) -> Tuple[bool, Optional[ForwardTestResult], Optional[bool]]:
+    """Bản DÙNG CHO EVAL (scripts/eval_val.py) — P&L THẬT cho BUY/SELL
+    (LOSS luôn -1.0, WIN luôn +rr, TIMEOUT mark-to-market tại Close nến
+    cuối horizon — xem true_forward_test). CANCEL_BUY/CANCEL_SELL KHÔNG
+    có outcome (giống WAIT/HOLD) — phản-thực không có ý nghĩa cho báo cáo
+    P&L, chỉ cần thống kê tần suất/tỷ lệ action này qua summarize()."""
+    return _evaluate_outcome_impl(
+        action, think, future_candles, sl_min_dist_bins, sl_max_dist_bins,
+        forward_fn=true_forward_test, counterfactual_fn=None,
+    )

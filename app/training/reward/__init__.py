@@ -4,15 +4,18 @@ from app.training.reward.forward_test import (
     is_sl_valid,
     derive_target,
     forward_test,
+    true_forward_test,
     probe_zone_quality,
     counterfactual_outcome,
     evaluate_outcome,
+    evaluate_true_outcome,
     SL_MIN_DIST_BINS,
     SL_MAX_DIST_BINS,
     BIN_MIN,
     BIN_MAX,
     HORIZON,
 )
+
 from app.training.reward.reward_func import (
     R_WF_FULL,
     R_SEM_FULL,

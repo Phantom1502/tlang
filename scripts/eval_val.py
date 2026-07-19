@@ -97,7 +97,7 @@ def evaluate_batch(
 
     from app.lang.parser import Parser
     from app.lang.semantic import SemanticChecker
-    from app.training.reward.forward_test import evaluate_outcome
+    from app.training.reward.forward_test import evaluate_true_outcome
 
     prompts = [r["prompt"] for r in rows]
 
@@ -154,7 +154,7 @@ def evaluate_batch(
         # và bao gồm luôn is_sl_valid (khoảng cách SL + đúng phía zone) cho BUY/SELL
         # — đây là ràng buộc "extra semantic" nằm ngoài bảng A/B/D/E của SemanticChecker
         # (xem docs/spec_trading_llm_v0.2.md mục 6.1), nên phải AND lại với sem_result.passed.
-        extra_valid, forward_result, sl_valid = evaluate_outcome(
+        extra_valid, forward_result, sl_valid = evaluate_true_outcome(
             action, think, [tuple(c) for c in row["future_bins"]],
             sl_min_dist_bins=sl_min_dist_bins, sl_max_dist_bins=sl_max_dist_bins,
         )
@@ -178,7 +178,9 @@ def summarize(records: List[EvalRecord]) -> Dict[str, Any]:
     n_well_formed = sum(1 for r in records if r.well_formed)
     n_semantic_passed = sum(1 for r in records if r.semantic_passed)
 
-    by_trend_action: Dict[str, Dict[str, dict]] = defaultdict(lambda: defaultdict(lambda: {"count": 0, "r_multiples": []}))
+    by_trend_action: Dict[str, Dict[str, dict]] = defaultdict(
+        lambda: defaultdict(lambda: {"count": 0, "r_multiples": [], "statuses": []})
+    )
     for r in records:
         if not (r.well_formed and r.semantic_passed and r.trend and r.action_type):
             continue
@@ -186,17 +188,22 @@ def summarize(records: List[EvalRecord]) -> Dict[str, Any]:
         entry["count"] += 1
         if r.r_multiple is not None:
             entry["r_multiples"].append(r.r_multiple)
+        if r.outcome_status is not None:
+            entry["statuses"].append(r.outcome_status)
 
     breakdown: Dict[str, Dict[str, dict]] = {}
     for trend, actions in by_trend_action.items():
         breakdown[trend] = {}
         for action_type, entry in actions.items():
             rms = entry["r_multiples"]
+            statuses = entry["statuses"]
+            n_status = len(statuses) or 1
             breakdown[trend][action_type] = {
                 "count": entry["count"],
                 "avg_r_multiple": (sum(rms) / len(rms)) if rms else None,
-                "win_rate": (sum(1 for x in rms if x > 0) / len(rms)) if rms else None,
-                "timeout_rate": (sum(1 for x in rms if x == 0.0) / len(rms)) if rms else None,
+                "win_rate": (statuses.count("WIN") / n_status) if statuses else None,
+                "loss_rate": (statuses.count("LOSS") / n_status) if statuses else None,
+                "timeout_rate": (statuses.count("TIMEOUT") / n_status) if statuses else None,
             }
 
     return {
@@ -282,8 +289,8 @@ def main() -> None:
             f"({tok.vocab_size}) — checkpoint và tokenizer không khớp (vi phạm vocab contract)."
         )
 
-    ds = load_dataset(args.dataset_name, split=args.split)
-    #ds = load_dataset("parquet", data_files="data/dataset/XAUUSD_M1_Val_grpo_dataset.parquet", split='train')
+    #ds = load_dataset(args.dataset_name, split=args.split)
+    ds = load_dataset("parquet", data_files="data/dataset/XAUUSD_M1_Val_grpo_dataset.parquet", split='train')
     if args.limit is not None:
         ds = ds.select(range(min(args.limit, len(ds))))
     logger.info(f"Loaded {len(ds)} sample từ {args.dataset_name} split={args.split}")
