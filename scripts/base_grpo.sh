@@ -35,6 +35,10 @@ python -m app.training.train_grpo \
     --logging_steps 10 \
     --max_completion_length 128 \
     \
+    --temperature 1.1 \
+    --top_p 1.0 \
+    --top_k 0 \
+    \
     --num_generations 16 \
     \
     --save_steps 50 \

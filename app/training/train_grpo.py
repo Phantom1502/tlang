@@ -85,6 +85,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--logging_steps", type=int, default=10)
     p.add_argument("--max_completion_length", type=int, default=64, help="think+action block ngắn (~30-40 token thực đo)")
 
+    # trong build_arg_parser(), thêm cùng nhóm với --num_generations:
+    p.add_argument("--temperature", type=float, default=1.1, help="Tăng >1.0 để rollout đa dạng hơn giữa num_generations completions")
+    p.add_argument("--top_p", type=float, default=1.0, help="1.0 = không cắt tail, giữ tối đa đa dạng")
+    p.add_argument("--top_k", type=int, default=0, help="0/None = tắt top_k filtering")
+    p.add_argument("--min_p", type=float, default=0.0, help="0.0 = tắt")
+    p.add_argument("--repetition_penalty", type=float, default=1.0)
+
     # --- GRPO-specific (mục 6.1) ---
     p.add_argument("--num_generations", type=int, default=12, help="group size — mục 6.1, chỉnh theo VRAM nếu OOM")
     p.add_argument(
@@ -306,6 +313,14 @@ def main() -> None:
         num_train_epochs=args.num_train_epochs,
         logging_steps=args.logging_steps,
         max_completion_length=args.max_completion_length,
+        
+        # sample method
+        temperature=args.temperature,
+        top_p=args.top_p,
+        top_k=args.top_k if args.top_k > 0 else None,
+        min_p=args.min_p if args.min_p > 0 else None,
+        repetition_penalty=args.repetition_penalty,
+    
         num_generations=args.num_generations,
         use_vllm=args.use_vllm,
         fp16=args.fp16,
