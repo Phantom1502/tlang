@@ -10,7 +10,7 @@
   "sl_valid_bonus": 0.2,
   "sl_valid_penalty": 0.2,
   "trade_fee_bins": 0.5,
-  "buff_action": 0.8,
+  "buff_action": 0.7,
   "pure_outcome_mode": true,
   "weight_table": {
     "UP":    { "BUY": 1.0, "CANCEL_BUY": 1.0, "WAIT_BUY": 1.0 },
