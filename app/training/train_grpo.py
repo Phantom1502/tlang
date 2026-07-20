@@ -224,6 +224,7 @@ def main() -> None:
     from app.training.reward.reward_func import (
         StatsCollector,
         action_buffs,
+        hold_buff,
         stats_collector,
         unified_reward_func,
         update_buffs_from_stats,
@@ -312,20 +313,25 @@ def main() -> None:
     # ------------------------------------------------------------
     rank = int(os.environ.get("RANK", os.environ.get("LOCAL_RANK", "0")))
     stats_path = _stats_path_for_rank(args.output_dir, args.round_id, rank)
-    loaded_stats, loaded_buffs = StatsCollector.load(stats_path)
+    loaded_stats, loaded_buffs, loaded_hold = StatsCollector.load(stats_path)
     stats_collector._records = loaded_stats._records
     for action_type, value in loaded_buffs.items():
         action_buffs.set(action_type, value)
+    hold_buff.set(loaded_hold)
     logger.info(
         f"[rank={rank}] StatsCollector: nạp lại {len(stats_collector._records)} record của chu kỳ dở "
-        f"(nếu session bị ngắt giữa chừng); action_buffs khôi phục = {action_buffs.snapshot()}"
+        f"(nếu session bị ngắt giữa chừng); action_buffs khôi phục = {action_buffs.snapshot()}; "
+        f"hold_buff khôi phục = {hold_buff.get()}"
     )
 
     # Nạp lại buff ngay từ record cũ (nếu resume giữa round) để buff không bị
     # reset về 0 rồi mất vài chu kỳ save_steps mới bắt kịp lại trạng thái cũ.
     if stats_collector._records:
-        update_buffs_from_stats(stats_collector, round_config, action_buffs)
-        logger.info(f"[rank={rank}] Buff nạp lại từ stats cũ: {action_buffs.snapshot()}")
+        update_buffs_from_stats(stats_collector, round_config, action_buffs, hold=hold_buff)
+        logger.info(
+            f"[rank={rank}] Buff nạp lại từ stats cũ: {action_buffs.snapshot()}; "
+            f"hold_buff = {hold_buff.get()}"
+        )
 
     # ------------------------------------------------------------
     # Dataset GRPO — chỉ cần "prompt" (model tự sinh phần còn lại) +
@@ -376,27 +382,27 @@ def main() -> None:
         def on_save(self, args, state, control, **kwargs):
             n_records = len(stats_collector._records)
 
-            update_buffs_from_stats(stats_collector, round_config, action_buffs)
+            update_buffs_from_stats(stats_collector, round_config, action_buffs, hold=hold_buff)
 
             # In thống kê CHU KỲ VỪA XONG ra console — không cần --report_only nữa,
             # vì stats_collector sắp bị reset() ngay sau đây (chỉ chứa đúng chu kỳ này).
             print(f"\n=== [step={state.global_step}] Chu kỳ vừa xong ({n_records} record) ===")
             stats_collector.print_summary()
-            print(f"action_buffs sau update: {action_buffs.snapshot()}\n")
+            print(f"action_buffs sau update: {action_buffs.snapshot()}  hold_buff: {hold_buff.get()}\n")
 
-            stats_collector.save(stats_path, buffs=action_buffs)
+            stats_collector.save(stats_path, buffs=action_buffs, hold=hold_buff)
             logger.info(
                 f"[rank={rank}] Đã lưu {n_records} record -> {stats_path}; "
-                f"action_buffs = {action_buffs.snapshot()}"
+                f"action_buffs = {action_buffs.snapshot()}; hold_buff = {hold_buff.get()}"
             )
             stats_collector.reset()
 
         def on_train_end(self, args, state, control, **kwargs):
-            update_buffs_from_stats(stats_collector, round_config, action_buffs)
+            update_buffs_from_stats(stats_collector, round_config, action_buffs, hold=hold_buff)
             print(f"\n=== [train_end] Chu kỳ cuối cùng ===")
             stats_collector.print_summary()
-            print(f"action_buffs cuối: {action_buffs.snapshot()}\n")
-            stats_collector.save(stats_path, buffs=action_buffs)
+            print(f"action_buffs cuối: {action_buffs.snapshot()}  hold_buff cuối: {hold_buff.get()}\n")
+            stats_collector.save(stats_path, buffs=action_buffs, hold=hold_buff)
 
     trainer = GRPOTrainer(
         model=model,
@@ -419,9 +425,9 @@ def main() -> None:
     # thích ở chỗ set add_eos_token phía trên).
     canonical_tok = load_tokenizer(repo_id=args.repo_id, allow_local_fallback=False)
     canonical_tok.save_pretrained(args.output_dir)
-    update_buffs_from_stats(stats_collector, round_config, action_buffs)
-    stats_collector.save(stats_path, buffs=action_buffs)   # chu kỳ cuối cùng chưa kịp chạm save_steps
-
+    update_buffs_from_stats(stats_collector, round_config, action_buffs, hold=hold_buff)
+    stats_collector.save(stats_path, buffs=action_buffs, hold=hold_buff)   # chu kỳ cuối cùng chưa kịp chạm save_steps
+    
     if push_to_hub:
         trainer.push_to_hub(commit_message=f"GRPO {args.round_id} checkpoint")
         logger.info(f"Đã push lên: https://huggingface.co/{args.repo_id}")
@@ -429,7 +435,7 @@ def main() -> None:
     if trainer.is_world_process_zero():
         print(f"\n=== Report round {args.round_id} (rank {rank} — chạy lại với --report_only để gộp mọi rank) ===")
         stats_collector.print_summary()
-        print(f"\naction_buffs cuối round: {action_buffs.snapshot()}")
+        print(f"\naction_buffs cuối round: {action_buffs.snapshot()}  hold_buff cuối round: {hold_buff.get()}")
 
 
 if __name__ == "__main__":

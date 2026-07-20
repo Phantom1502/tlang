@@ -80,13 +80,28 @@ action_buffs = ActionBuffTable()
 
 _active_round_config: Optional[RoundConfig] = None
 
+class HoldBuff:
+    def __init__(self):
+        self._value: float = 0.0
+
+    def get(self) -> float:
+        return self._value
+
+    def set(self, value: float) -> None:
+        self._value = value
+
+    def reset(self) -> None:
+        self._value = 0.0
+
+
+hold_buff = HoldBuff()
 
 def set_active_round_config(config: RoundConfig) -> None:
     global _active_round_config
     _active_round_config = config
-    action_buffs.reset()   # round mới -> buff học lại từ đầu, KHÔNG mang buff round trước sang
-
-
+    action_buffs.reset()
+    hold_buff.reset()
+    
 def get_active_round_config() -> RoundConfig:
     if _active_round_config is None:
         raise RuntimeError("Chưa load RoundConfig — gọi set_active_round_config(RoundConfig.load(path)) trước.")
@@ -200,19 +215,18 @@ class StatsCollector:
 
     def to_list(self):
         return [asdict(r) for r in self._records]
-
-    def save(self, path: str, buffs: Optional["ActionBuffTable"] = None) -> None:
-        """Từ giờ LƯU CẢ action_buffs snapshot vào cùng file — dùng chính file
-        stats (đã auto-push lên Hub qua hub_strategy) làm checkpoint cho buff,
-        không cần cơ chế lưu riêng."""
+        
+    def save(self, path: str, buffs=None, hold=None) -> None:
         p = Path(path); p.parent.mkdir(parents=True, exist_ok=True)
-        payload: Dict[str, Any] = {"records": self.to_list()}
+        payload = {"records": self.to_list()}
         if buffs is not None:
             payload["action_buffs"] = buffs.snapshot()
+        if hold is not None:
+            payload["hold_buff"] = hold.get()
         p.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
     @classmethod
-    def load(cls, path: str) -> Tuple["StatsCollector", Dict[str, float]]:
+    def load(cls, path: str):
         """Trả về (collector, buffs_dict). Hỗ trợ NGƯỢC format cũ (bare list,
         không có action_buffs) — file cũ từ trước khi đổi format vẫn load được,
         chỉ là buffs_dict rỗng."""
@@ -228,8 +242,9 @@ class StatsCollector:
                 buffs_dict = data.get("action_buffs", {})
             for d in records:
                 collector.log(RolloutRecord(**d))
-        return collector, buffs_dict
-
+                
+        hold_value = data.get("hold_buff", 0.0) if isinstance(data, dict) else 0.0
+        return collector, buffs_dict, hold_value
     @classmethod
     def merge_from_files(cls, paths) -> "StatsCollector":
         """report_only giờ chỉ gộp được records của CHU KỲ CUỐI mỗi rank (vì
@@ -255,37 +270,39 @@ def update_buffs_from_stats(
     stats: StatsCollector,
     round_config: RoundConfig,
     buffs: Optional[ActionBuffTable] = None,
+    hold: Optional[HoldBuff] = None,
 ) -> None:
-    """
-    Gọi mỗi save_steps (xem StatsPersistCallback trong app/training/train_grpo.py).
-
-    actual_ratio = (BUY + SELL) / tổng toàn bộ action (well_formed + semantic_passed,
-    gộp mọi trend) — so với round_config.target_action_ratio:
-        actual < target -> buff BUY và buff SELL đều += buff_step (thiếu, nâng dần)
-        actual > target -> buff BUY và buff SELL đều -= buff_step (dư, hạ dần)
-        actual ~= target (trong RATIO_TOLERANCE) -> giữ nguyên
-    BUY và SELL LUÔN cùng 1 delta (ratio là tổng gộp, không tách riêng theo lệnh).
-    Clamp vào [buff_min, buff_max]. Không đủ dữ liệu (total=0) -> bỏ qua, giữ nguyên.
-    """
     buffs = buffs if buffs is not None else action_buffs
+    hold = hold if hold is not None else hold_buff
     counts = stats.action_counts()
     total = sum(counts.values())
     if total == 0:
         return
 
+    # --- BUY/SELL buff (giữ nguyên logic cũ) ---
     actual_ratio = (counts.get("BUY", 0) + counts.get("SELL", 0)) / total
     target_ratio = round_config.target_action_ratio
-
     if actual_ratio < target_ratio - RATIO_TOLERANCE:
         delta = round_config.buff_step
     elif actual_ratio > target_ratio + RATIO_TOLERANCE:
         delta = -round_config.buff_step
     else:
         delta = 0.0
-
     for action_type in OUTCOME_ACTIONS:
         new_buff = min(round_config.buff_max, max(round_config.buff_min, buffs.get(action_type) + delta))
         buffs.set(action_type, new_buff)
+
+    # --- HOLD buff — mẫu số = TOÀN BỘ action (mọi trend), độc lập BUY/SELL ---
+    actual_hold_ratio = counts.get("HOLD", 0) / total
+    target_hold_ratio = round_config.target_hold_ratio
+    if actual_hold_ratio < target_hold_ratio - RATIO_TOLERANCE:
+        hold_delta = round_config.hold_buff_step
+    elif actual_hold_ratio > target_hold_ratio + RATIO_TOLERANCE:
+        hold_delta = -round_config.hold_buff_step
+    else:
+        hold_delta = 0.0
+    new_hold = min(round_config.hold_buff_max, max(round_config.hold_buff_min, hold.get() + hold_delta))
+    hold.set(new_hold)
 
 
 # =====================================================================
@@ -413,7 +430,9 @@ def score_completion(
     zone_score = compute_zone_score(think, future_candles, round_config)
     outcome_score = compute_outcome_score(action, think, forward_result, round_config, buffs)
     reward = K + zone_score + outcome_score
-
+    if action_type == "HOLD":
+        reward += hold_buff.get()
+        
     if stats is not None:
         stats.log(RolloutRecord(
             trend=trend, action_type=action_type, intended_action_type=intended_action,

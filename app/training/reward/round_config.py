@@ -19,6 +19,10 @@ _REQUIRED_KEYS = (
     "buff_step",             # mỗi lần update_buffs_from_stats(): tăng/giảm buff bao nhiêu
     "buff_max",
     "buff_min",
+    "target_hold_ratio",
+    "hold_buff_step", 
+    "hold_buff_max", 
+    "hold_buff_min",
 )
 
 # =====================================================================
@@ -49,6 +53,10 @@ class RoundConfig:
     buff_step: float
     buff_max: float
     buff_min: float = 0.0
+    target_hold_ratio: float = 0.10
+    hold_buff_step: float = 0.0
+    hold_buff_max: float = 0.0
+    hold_buff_min: float = 0.0
 
     def __post_init__(self) -> None:
         """
@@ -81,6 +89,12 @@ class RoundConfig:
             raise ValueError(f"buff_step phải >= 0, nhận {self.buff_step}.")
         if self.buff_min > self.buff_max:
             raise ValueError(f"buff_min ({self.buff_min}) phải <= buff_max ({self.buff_max}).")
+        if not (0.0 <= self.target_hold_ratio <= 1.0):
+            raise ValueError(f"target_hold_ratio phải trong [0,1], nhận {self.target_hold_ratio}.")
+        if self.hold_buff_step < 0:
+            raise ValueError(f"hold_buff_step phải >= 0, nhận {self.hold_buff_step}.")
+        if self.hold_buff_min > self.hold_buff_max:
+            raise ValueError(f"hold_buff_min ({self.hold_buff_min}) phải <= hold_buff_max ({self.hold_buff_max}).")
         if self.sl_min_dist_bins <= 0:
             raise ValueError(f"sl_min_dist_bins phải > 0, nhận {self.sl_min_dist_bins}.")
 
@@ -99,6 +113,14 @@ class RoundConfig:
                 f"1 completion PASS gate với outcome/zone tệ nhất có thể có reward THẤP HƠN hoặc BẰNG "
                 f"1 completion FAIL gate nhẹ, phá vỡ gate cứng. Tăng pass_gate2_bonus hoặc giảm "
                 f"zone_score_scale/trade_fee_bins/sl_valid_bonus để sửa."
+            )
+        worst_hold = self.pass_gate2_bonus + self.hold_buff_min
+        if worst_hold <= gate2_fail_max:
+            raise ValueError(
+                f"[round {self.round_id!r}] hold_buff_min ({self.hold_buff_min}) khiến worst-case "
+                f"reward của HOLD khi PASS gate = K({self.pass_gate2_bonus}) + hold_buff_min"
+                f"({self.hold_buff_min}) = {worst_hold:.3f}, phải LỚN HƠN gate2_fail_max "
+                f"({gate2_fail_max:.3f}). Tăng pass_gate2_bonus hoặc nâng hold_buff_min."
             )
 
     @classmethod

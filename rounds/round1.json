@@ -13,4 +13,8 @@
   "buff_step": 0.1,
   "buff_max": 0.9,
   "buff_min": 0.0,
+  "target_hold_ratio": 0.10,
+  "hold_buff_step": 0.1,
+  "hold_buff_max": 0.9,
+  "hold_buff_min": 0.0
 }
