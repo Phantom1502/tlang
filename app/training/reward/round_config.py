@@ -147,6 +147,10 @@ class RoundConfig:
             buff_step=float(data["buff_step"]),
             buff_max=float(data["buff_max"]),
             buff_min=float(data.get("buff_min", 0.0)),
+            target_hold_ratio=float(data["target_hold_ratio"]),
+            hold_buff_step=float(data["hold_buff_step"]),
+            hold_buff_max=float(data["hold_buff_max"]),
+            hold_buff_min=float(data["hold_buff_min"]),
         )
 
     def save(self, path: str) -> None:
