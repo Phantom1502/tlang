@@ -79,7 +79,8 @@ class EvalRecord:
     trend: Optional[str]
     action_type: Optional[str]
     outcome_status: Optional[str]
-    r_multiple: Optional[float]
+    r_multiple: Optional[float]        # gross — chưa trừ phí
+    r_multiple_net: Optional[float] = None   # đã trừ phí, KHÔNG cộng buff_action
 
 
 def _batched(seq: List[Any], n: int):
@@ -92,6 +93,7 @@ def evaluate_batch(
     max_new_tokens: int, do_sample: bool, temperature: float, top_p: float,
     zone_width_min_bins: int, zone_width_max_bins: int,
     sl_min_dist_bins: int, sl_max_dist_bins: int,
+    trade_fee_bins: float = 0.0,
 ) -> List[EvalRecord]:
     import torch
 
@@ -160,6 +162,16 @@ def evaluate_batch(
         )
         semantic_passed = sem_result.passed and extra_valid
 
+        # --- Phí: CHỈ áp dụng cho BUY/SELL (có risk_bins thật), KHÔNG cộng
+        # buff_action (buff_action là reward-shaping riêng cho GRPO train,
+        # không phản ánh P&L thật) ---
+        r_multiple_gross = forward_result.r_multiple if (semantic_passed and forward_result) else None
+        r_multiple_net = r_multiple_gross
+        if semantic_passed and forward_result is not None and action.action_type in ("BUY", "SELL"):
+            risk_bins = abs(think.current_price_bin - action.sl)
+            fee_in_r = trade_fee_bins / risk_bins if risk_bins > 0 else 0.0
+            r_multiple_net = r_multiple_gross - fee_in_r
+
         records.append(EvalRecord(
             window_id=row.get("window_id"), symbol=row.get("symbol"),
             prompt=prompt, completion=completion,
@@ -167,7 +179,8 @@ def evaluate_batch(
             semantic_passed=semantic_passed, semantic_score=sem_result.score,
             trend=think.trend, action_type=action.action_type,
             outcome_status=forward_result.status.value if (semantic_passed and forward_result) else None,
-            r_multiple=forward_result.r_multiple if (semantic_passed and forward_result) else None,
+            r_multiple=r_multiple_gross,
+            r_multiple_net=r_multiple_net,
         ))
 
     return records
@@ -179,7 +192,7 @@ def summarize(records: List[EvalRecord]) -> Dict[str, Any]:
     n_semantic_passed = sum(1 for r in records if r.semantic_passed)
 
     by_trend_action: Dict[str, Dict[str, dict]] = defaultdict(
-        lambda: defaultdict(lambda: {"count": 0, "r_multiples": [], "statuses": []})
+        lambda: defaultdict(lambda: {"count": 0, "r_multiples": [], "r_multiples_net": [], "statuses": []})
     )
     for r in records:
         if not (r.well_formed and r.semantic_passed and r.trend and r.action_type):
@@ -188,6 +201,8 @@ def summarize(records: List[EvalRecord]) -> Dict[str, Any]:
         entry["count"] += 1
         if r.r_multiple is not None:
             entry["r_multiples"].append(r.r_multiple)
+        if r.r_multiple_net is not None:
+            entry["r_multiples_net"].append(r.r_multiple_net)
         if r.outcome_status is not None:
             entry["statuses"].append(r.outcome_status)
 
@@ -196,11 +211,13 @@ def summarize(records: List[EvalRecord]) -> Dict[str, Any]:
         breakdown[trend] = {}
         for action_type, entry in actions.items():
             rms = entry["r_multiples"]
+            rms_net = entry["r_multiples_net"]
             statuses = entry["statuses"]
             n_status = len(statuses) or 1
             breakdown[trend][action_type] = {
                 "count": entry["count"],
-                "avg_r_multiple": (sum(rms) / len(rms)) if rms else None,
+                "avg_r_multiple_gross": (sum(rms) / len(rms)) if rms else None,
+                "avg_r_multiple_net": (sum(rms_net) / len(rms_net)) if rms_net else None,
                 "win_rate": (statuses.count("WIN") / n_status) if statuses else None,
                 "loss_rate": (statuses.count("LOSS") / n_status) if statuses else None,
                 "timeout_rate": (statuses.count("TIMEOUT") / n_status) if statuses else None,
@@ -225,11 +242,12 @@ def print_summary(summary: Dict[str, Any]) -> None:
     for trend, actions in summary["by_trend_action"].items():
         print(f"trend={trend}")
         for action_type, stat in actions.items():
-            avg_r = f"{stat['avg_r_multiple']:.2f}" if stat["avg_r_multiple"] is not None else "-"
+            avg_g = f"{stat['avg_r_multiple_gross']:.3f}" if stat["avg_r_multiple_gross"] is not None else "-"
+            avg_n = f"{stat['avg_r_multiple_net']:.3f}" if stat["avg_r_multiple_net"] is not None else "-"
             win_rate = f"{stat['win_rate'] * 100:.0f}%" if stat["win_rate"] is not None else "-"
             timeout_rate = f"{stat['timeout_rate'] * 100:.0f}%" if stat["timeout_rate"] is not None else "-"
             print(
-                f"  {action_type:<12} count={stat['count']:<4} avg_R={avg_r:>6}  "
+                f"  {action_type:<12} count={stat['count']:<4} avg_R_gross={avg_g:>7}  avg_R_net={avg_n:>7}  "
                 f"win_rate={win_rate:>5}  timeout={timeout_rate:>5}"
             )
 
@@ -252,23 +270,25 @@ def main() -> None:
     if device == "cuda":
         logger.info(f"GPU : {torch.cuda.get_device_name(0)}")
 
-    # --- zone_width/SL-distance range: khớp round GRPO cụ thể nếu truyền --round_config,
-    # ngược lại dùng hằng số module (SemanticChecker/forward_test.py). CHỈ lấy 2 range này
-    # từ RoundConfig — K/zone_quality_bonus/trade_fee_bins/weight_table KHÔNG dùng ở đây
-    # (đó là reward-shaping cho RL, không liên quan tới đo outcome thô).
     if args.round_config:
         from app.training.reward.round_config import RoundConfig
         rc = RoundConfig.load(args.round_config)
         zone_width_min_bins, zone_width_max_bins = rc.zone_width_min_bins, rc.zone_width_max_bins
         sl_min_dist_bins, sl_max_dist_bins = rc.sl_min_dist_bins, rc.sl_max_dist_bins
+        default_trade_fee_bins = rc.trade_fee_bins
         logger.info(
             f"Dùng RoundConfig từ {args.round_config}: "
-            f"zone=[{zone_width_min_bins},{zone_width_max_bins}] sl=[{sl_min_dist_bins},{sl_max_dist_bins}]"
+            f"zone=[{zone_width_min_bins},{zone_width_max_bins}] sl=[{sl_min_dist_bins},{sl_max_dist_bins}] "
+            f"trade_fee_bins={default_trade_fee_bins}"
         )
     else:
         zone_width_min_bins = SemanticChecker.ZONE_WIDTH_MIN_BINS
         zone_width_max_bins = SemanticChecker.ZONE_WIDTH_MAX_BINS
         sl_min_dist_bins, sl_max_dist_bins = SL_MIN_DIST_BINS, SL_MAX_DIST_BINS
+        default_trade_fee_bins = 0.0
+
+    trade_fee_bins = default_trade_fee_bins
+    logger.info(f"trade_fee_bins áp dụng cho eval = {trade_fee_bins} (KHÔNG cộng buff_action — buff chỉ dùng lúc train)")
 
     # --- Tokenizer — load qua Hub (mục 7.0 tokenizer_v0.1.md), KHÔNG build lại từ source.
     # add_eos_token=False/add_bos_token=True: khi encode prompt để generate, chỉ muốn
@@ -304,7 +324,7 @@ def main() -> None:
             do_sample=not args.greedy,
             temperature=args.temperature, top_p=args.top_p,
             zone_width_min_bins=zone_width_min_bins, zone_width_max_bins=zone_width_max_bins,
-            sl_min_dist_bins=sl_min_dist_bins, sl_max_dist_bins=sl_max_dist_bins,
+            sl_min_dist_bins=sl_min_dist_bins, sl_max_dist_bins=sl_max_dist_bins, trade_fee_bins=trade_fee_bins,
         )
         all_records.extend(records)
         logger.info(f"  đã eval {len(all_records)}/{len(rows)}")
