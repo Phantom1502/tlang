@@ -312,9 +312,14 @@ def main() -> None:
     # ------------------------------------------------------------
     rank = int(os.environ.get("RANK", os.environ.get("LOCAL_RANK", "0")))
     stats_path = _stats_path_for_rank(args.output_dir, args.round_id, rank)
-    loaded_stats = StatsCollector.load(stats_path)
-    stats_collector._records = loaded_stats._records   # nạp lại record cũ vào đúng singleton mà reward_func dùng
-    logger.info(f"[rank={rank}] StatsCollector: nạp lại {len(stats_collector._records)} record cũ từ {stats_path}")
+    loaded_stats, loaded_buffs = StatsCollector.load(stats_path)
+    stats_collector._records = loaded_stats._records
+    for action_type, value in loaded_buffs.items():
+        action_buffs.set(action_type, value)
+    logger.info(
+        f"[rank={rank}] StatsCollector: nạp lại {len(stats_collector._records)} record của chu kỳ dở "
+        f"(nếu session bị ngắt giữa chừng); action_buffs khôi phục = {action_buffs.snapshot()}"
+    )
 
     # Nạp lại buff ngay từ record cũ (nếu resume giữa round) để buff không bị
     # reset về 0 rồi mất vài chu kỳ save_steps mới bắt kịp lại trạng thái cũ.
@@ -369,15 +374,19 @@ def main() -> None:
     # ------------------------------------------------------------
     class StatsPersistCallback(TrainerCallback):
         def on_save(self, args, state, control, **kwargs):
-            stats_collector.save(stats_path)
             update_buffs_from_stats(stats_collector, round_config, action_buffs)
+            stats_collector.save(stats_path, buffs=action_buffs)
             logger.info(
-                f"[rank={rank}] Đã lưu {len(stats_collector._records)} record -> {stats_path}; "
+                f"[rank={rank}] Chu kỳ vừa xong: {len(stats_collector._records)} record -> {stats_path}; "
                 f"action_buffs = {action_buffs.snapshot()}"
             )
+            stats_collector.reset()   # QUAN TRỌNG: xoá sạch để chu kỳ tiếp theo bắt đầu từ 0,
+                                    # tránh file phình to + đảm bảo update_buffs lần sau chỉ
+                                    # tính trên đúng chu kỳ mới, không lẫn lịch sử cũ.
 
         def on_train_end(self, args, state, control, **kwargs):
-            stats_collector.save(stats_path)
+            update_buffs_from_stats(stats_collector, round_config, action_buffs)
+            stats_collector.save(stats_path, buffs=action_buffs)
 
     trainer = GRPOTrainer(
         model=model,
@@ -400,8 +409,8 @@ def main() -> None:
     # thích ở chỗ set add_eos_token phía trên).
     canonical_tok = load_tokenizer(repo_id=args.repo_id, allow_local_fallback=False)
     canonical_tok.save_pretrained(args.output_dir)
-    stats_collector.save(stats_path)   # đảm bảo bản cuối cùng luôn được ghi, kể cả max_steps=nhỏ chưa chạm save_steps nào
     update_buffs_from_stats(stats_collector, round_config, action_buffs)
+    stats_collector.save(stats_path, buffs=action_buffs)   # chu kỳ cuối cùng chưa kịp chạm save_steps
 
     if push_to_hub:
         trainer.push_to_hub(commit_message=f"GRPO {args.round_id} checkpoint")

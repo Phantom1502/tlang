@@ -201,25 +201,47 @@ class StatsCollector:
     def to_list(self):
         return [asdict(r) for r in self._records]
 
-    def save(self, path: str) -> None:
+    def save(self, path: str, buffs: Optional["ActionBuffTable"] = None) -> None:
+        """Từ giờ LƯU CẢ action_buffs snapshot vào cùng file — dùng chính file
+        stats (đã auto-push lên Hub qua hub_strategy) làm checkpoint cho buff,
+        không cần cơ chế lưu riêng."""
         p = Path(path); p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps(self.to_list(), ensure_ascii=False), encoding="utf-8")
+        payload: Dict[str, Any] = {"records": self.to_list()}
+        if buffs is not None:
+            payload["action_buffs"] = buffs.snapshot()
+        p.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
     @classmethod
-    def load(cls, path: str) -> "StatsCollector":
-        collector = cls(); p = Path(path)
+    def load(cls, path: str) -> Tuple["StatsCollector", Dict[str, float]]:
+        """Trả về (collector, buffs_dict). Hỗ trợ NGƯỢC format cũ (bare list,
+        không có action_buffs) — file cũ từ trước khi đổi format vẫn load được,
+        chỉ là buffs_dict rỗng."""
+        collector = cls()
+        p = Path(path)
+        buffs_dict: Dict[str, float] = {}
         if p.exists():
-            for d in json.loads(p.read_text(encoding="utf-8")):
+            data = json.loads(p.read_text(encoding="utf-8"))
+            if isinstance(data, list):          # format cũ — bare list record
+                records = data
+            else:                                # format mới — {"records":..., "action_buffs":...}
+                records = data.get("records", [])
+                buffs_dict = data.get("action_buffs", {})
+            for d in records:
                 collector.log(RolloutRecord(**d))
-        return collector
+        return collector, buffs_dict
 
     @classmethod
     def merge_from_files(cls, paths) -> "StatsCollector":
+        """report_only giờ chỉ gộp được records của CHU KỲ CUỐI mỗi rank (vì
+        file bị reset mỗi save_steps) — không còn full-round history, đây là
+        đánh đổi chủ ý để tránh file phình to qua hàng nghìn step."""
         collector = cls()
         for path in paths:
             p = Path(path)
             if not p.exists(): continue
-            for d in json.loads(p.read_text(encoding="utf-8")):
+            data = json.loads(p.read_text(encoding="utf-8"))
+            records = data if isinstance(data, list) else data.get("records", [])
+            for d in records:
                 collector.log(RolloutRecord(**d))
         return collector
 
