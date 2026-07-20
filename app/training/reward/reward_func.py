@@ -227,24 +227,26 @@ class StatsCollector:
 
     @classmethod
     def load(cls, path: str):
-        """Trả về (collector, buffs_dict). Hỗ trợ NGƯỢC format cũ (bare list,
-        không có action_buffs) — file cũ từ trước khi đổi format vẫn load được,
-        chỉ là buffs_dict rỗng."""
+        """Trả về (collector, buffs_dict, hold_value). Hỗ trợ NGƯỢC format cũ
+        (bare list, không có action_buffs/hold_buff) — file cũ từ trước khi đổi
+        format vẫn load được, chỉ là buffs_dict rỗng và hold_value=0.0."""
         collector = cls()
         p = Path(path)
         buffs_dict: Dict[str, float] = {}
+        hold_value: float = 0.0
         if p.exists():
             data = json.loads(p.read_text(encoding="utf-8"))
             if isinstance(data, list):          # format cũ — bare list record
                 records = data
-            else:                                # format mới — {"records":..., "action_buffs":...}
+            else:                                # format mới — {"records":..., "action_buffs":..., "hold_buff":...}
                 records = data.get("records", [])
                 buffs_dict = data.get("action_buffs", {})
+                hold_value = data.get("hold_buff", 0.0)
             for d in records:
                 collector.log(RolloutRecord(**d))
-                
-        hold_value = data.get("hold_buff", 0.0) if isinstance(data, dict) else 0.0
+
         return collector, buffs_dict, hold_value
+    
     @classmethod
     def merge_from_files(cls, paths) -> "StatsCollector":
         """report_only giờ chỉ gộp được records của CHU KỲ CUỐI mỗi rank (vì
