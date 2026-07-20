@@ -374,18 +374,28 @@ def main() -> None:
     # ------------------------------------------------------------
     class StatsPersistCallback(TrainerCallback):
         def on_save(self, args, state, control, **kwargs):
+            n_records = len(stats_collector._records)
+
             update_buffs_from_stats(stats_collector, round_config, action_buffs)
+
+            # In thống kê CHU KỲ VỪA XONG ra console — không cần --report_only nữa,
+            # vì stats_collector sắp bị reset() ngay sau đây (chỉ chứa đúng chu kỳ này).
+            print(f"\n=== [step={state.global_step}] Chu kỳ vừa xong ({n_records} record) ===")
+            stats_collector.print_summary()
+            print(f"action_buffs sau update: {action_buffs.snapshot()}\n")
+
             stats_collector.save(stats_path, buffs=action_buffs)
             logger.info(
-                f"[rank={rank}] Chu kỳ vừa xong: {len(stats_collector._records)} record -> {stats_path}; "
+                f"[rank={rank}] Đã lưu {n_records} record -> {stats_path}; "
                 f"action_buffs = {action_buffs.snapshot()}"
             )
-            stats_collector.reset()   # QUAN TRỌNG: xoá sạch để chu kỳ tiếp theo bắt đầu từ 0,
-                                    # tránh file phình to + đảm bảo update_buffs lần sau chỉ
-                                    # tính trên đúng chu kỳ mới, không lẫn lịch sử cũ.
+            stats_collector.reset()
 
         def on_train_end(self, args, state, control, **kwargs):
             update_buffs_from_stats(stats_collector, round_config, action_buffs)
+            print(f"\n=== [train_end] Chu kỳ cuối cùng ===")
+            stats_collector.print_summary()
+            print(f"action_buffs cuối: {action_buffs.snapshot()}\n")
             stats_collector.save(stats_path, buffs=action_buffs)
 
     trainer = GRPOTrainer(
