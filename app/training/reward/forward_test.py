@@ -177,46 +177,6 @@ def partial_tp_forward_test(
     realized_r += remaining * mtm_r
     return ForwardTestResult(status=OutcomeStatus.TIMEOUT, r_multiple=realized_r)
 
-def true_forward_test(
-    entry_bin: int,
-    sl_bin: int,
-    target_bin: int,
-    future_candles: List[FutureCandle],
-    direction: str,
-) -> ForwardTestResult:
-    risk = abs(entry_bin - sl_bin)
-    if risk == 0:
-        return ForwardTestResult(status=OutcomeStatus.INVALID_SETUP, r_multiple=0.0)
-
-    rr = abs(target_bin - entry_bin) / risk
-    last_close: Optional[int] = None
-
-    for i, (o, h, l, c) in enumerate(future_candles[:HORIZON]):
-        if direction == "long":
-            hit_sl = l <= sl_bin
-            hit_tp = h >= target_bin
-        else:
-            hit_sl = h >= sl_bin
-            hit_tp = l <= target_bin
-
-        if hit_sl:
-            return ForwardTestResult(status=OutcomeStatus.LOSS, r_multiple=-1.0, exit_index=i)
-        if hit_tp:
-            return ForwardTestResult(status=OutcomeStatus.WIN, r_multiple=rr, exit_index=i)
-
-        last_close = c
-
-    if last_close is None:
-        # future_candles rỗng — không có gì để mark-to-market.
-        return ForwardTestResult(status=OutcomeStatus.TIMEOUT, r_multiple=0.0)
-
-    if direction == "long":
-        r_multiple = (last_close - entry_bin) / risk
-    else:
-        r_multiple = (entry_bin - last_close) / risk
-
-    return ForwardTestResult(status=OutcomeStatus.TIMEOUT, r_multiple=r_multiple)
-
 def probe_zone_quality(
     zone: ZoneNode,
     future_candles: List[FutureCandle],
