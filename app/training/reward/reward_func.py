@@ -212,6 +212,10 @@ class StatsCollector:
         buy_sell = counts.get("BUY", 0) + counts.get("SELL", 0)
         ratio = buy_sell / total if total else 0.0
         print(f"\n=== Tỉ lệ (BUY+SELL)/tổng action (dùng cho buff) = {ratio*100:.1f}% (n={total}) ===")
+        hold = counts.get("HOLD", 0)
+        hold_ratio = hold / total if total else 0.0
+        print(f"=== Tỉ lệ HOLD = {hold_ratio*100:.1f}% (n={total}) ===")
+        
 
     def to_list(self):
         return [asdict(r) for r in self._records]
