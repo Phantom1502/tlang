@@ -5,8 +5,9 @@ from app.training.reward.forward_test import (
     derive_target,
     forward_test,
     true_forward_test,
+    partial_tp_forward_test,   # nhớ thêm — đã nhắc ở lượt trước, vẫn thiếu
     probe_zone_quality,
-    counterfactual_outcome,
+    # counterfactual_outcome,   <- xoá dòng này
     evaluate_outcome,
     evaluate_true_outcome,
     SL_MIN_DIST_BINS,
@@ -45,7 +46,7 @@ __all__ = [
     "forward_test",
     "true_forward_test",
     "probe_zone_quality",
-    "counterfactual_outcome",
+    "partial_tp_forward_test",
     "evaluate_outcome",
     "evaluate_true_outcome",
     "SL_MIN_DIST_BINS",
