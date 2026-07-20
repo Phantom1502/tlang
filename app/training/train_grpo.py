@@ -315,8 +315,17 @@ def main() -> None:
     stats_path = _stats_path_for_rank(args.output_dir, args.round_id, rank)
     loaded_stats, loaded_buffs, loaded_hold = StatsCollector.load(stats_path)
     stats_collector._records = loaded_stats._records
-    for action_type, value in loaded_buffs.items():
-        action_buffs.set(action_type, value)
+    if loaded_buffs:
+        # Có file cũ (resume giữa round) -> khôi phục ĐÚNG giá trị đã học, không dùng buff_init.
+        for action_type, value in loaded_buffs.items():
+            action_buffs.set(action_type, value)
+    else:
+        # Lần đầu tiên round này chạy (chưa từng có checkpoint) -> khởi tạo từ
+        # round_config.buff_init thay vì mặc định 0.0, để rút ngắn thời gian
+        # buff phải "leo" từ đáy lên mức hữu ích ban đầu.
+        for action_type in RoundConfig.OUTCOME_ACTIONS:
+            action_buffs.set(action_type, round_config.buff_init)
+        logger.info(f"[rank={rank}] Chưa có stats cũ — khởi tạo action_buffs = buff_init = {round_config.buff_init}")
     hold_buff.set(loaded_hold)
     logger.info(
         f"[rank={rank}] StatsCollector: nạp lại {len(stats_collector._records)} record của chu kỳ dở "

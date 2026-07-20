@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Optional
 
 _REQUIRED_KEYS = (
     "round_id",
@@ -53,6 +54,7 @@ class RoundConfig:
     buff_step: float
     buff_max: float
     buff_min: float = 0.0
+    buff_init: Optional[float] = None   # None -> mặc định = buff_min (giữ hành vi cũ)
     target_hold_ratio: float = 0.10
     hold_buff_step: float = 0.0
     hold_buff_max: float = 0.0
@@ -75,6 +77,13 @@ class RoundConfig:
 
         Cần: K + worst_zone_score + worst_outcome_score > gate2_fail_max
         """
+        if self.buff_init is None:
+            self.buff_init = self.buff_min
+        if not (self.buff_min <= self.buff_init <= self.buff_max):
+            raise ValueError(
+                f"buff_init ({self.buff_init}) phải nằm trong [buff_min, buff_max] "
+                f"= [{self.buff_min}, {self.buff_max}]."
+            )
         if not (0.0 <= self.target_action_ratio <= 1.0):
             raise ValueError(f"target_action_ratio phải trong [0,1], nhận {self.target_action_ratio}.")
         if self.zone_score_scale < 0:
@@ -151,6 +160,7 @@ class RoundConfig:
             hold_buff_step=float(data["hold_buff_step"]),
             hold_buff_max=float(data["hold_buff_max"]),
             hold_buff_min=float(data["hold_buff_min"]),
+            buff_init=data.get("buff_init"),  # None nếu file JSON không có field này
         )
 
     def save(self, path: str) -> None:
