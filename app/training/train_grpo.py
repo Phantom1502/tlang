@@ -11,15 +11,32 @@ theo ROUND thay vì tuyến tính (mục 6.1/6.3):
            của round liền trước cho round N>1 — TAY truyền, KHÔNG tự động hoá
            việc chuyển round, đúng quyết định spec mục 6.1/6.3)
 
-RoundConfig (zone_width/SL range + weight_table) BẮT BUỘC tường minh qua
---round_config, fail-loud nếu thiếu (xem app/training/reward/round_config.py)
-— generator/pretrain/SFT không liên quan gì tới config này, CHỈ GRPO mới cần
-vì chỉ tới đây outcome thật mới cho biết nên nới/siết zone/SL thế nào.
+RoundConfig (zone_width/SL range + target_action_ratio + buff step/cap) BẮT BUỘC
+tường minh qua --round_config, fail-loud nếu thiếu (xem
+app/training/reward/round_config.py) — generator/pretrain/SFT không liên quan gì
+tới config này, CHỈ GRPO mới cần vì chỉ tới đây outcome thật mới cho biết nên
+nới/siết zone/SL/tỉ lệ BUY-SELL thế nào.
+
+REWARD DESIGN (đã đổi so với bản trước — xem app/training/reward/reward_func.py):
+    1. Gate well-formed + semantic: fail -> giữ nguyên điểm gate, return ngay.
+       Pass cả 2 -> set về K = round_config.pass_gate2_bonus (đồng đều mọi mẫu).
+    2. Từ K, cộng 2 nhánh SONG SONG:
+       - zone_score:    mọi action có zone (BUY/SELL/CANCEL_*/WAIT_*), liên tục
+                         theo r_multiple của probe_zone_quality.
+       - outcome_score: CHỈ BUY/SELL, = r_multiple thật - phí + buff động.
+    3. Buff động (ActionBuffTable, KHÔNG còn WeightTable nhân trọng số cũ):
+       mỗi save_steps, so tỉ lệ (BUY+SELL)/tổng action thực tế với
+       round_config.target_action_ratio — thiếu thì tăng buff BUY+SELL, dư thì
+       giảm, cùng 1 delta cho cả 2 (xem update_buffs_from_stats()).
 
 StatsCollector persist ra đĩa theo pattern load-rồi-append (mục đã thống nhất
 khi thiết kế round_config.py): mỗi rank tự dump 1 file riêng, mỗi lần script
 khởi động lại (Colab bị ngắt, chạy lại NHIỀU LẦN trong CÙNG 1 round) đều load
 lại file cũ trước khi log tiếp — không mất thống kê giữa các lần chạy.
+ActionBuffTable KHÔNG persist ra đĩa — chỉ sống trong process hiện tại, tự học
+lại từ đầu (reset về 0) nếu Colab bị ngắt và chạy lại (chấp nhận được vì
+update_buffs_from_stats() tính lại ngay ở lần on_save đầu tiên dựa trên
+StatsCollector đã load lại đầy đủ).
 
 KV CACHE: model load từ SFT/round trước có thể mang theo use_cache=False (nếu
 checkpoint nguồn từng train với gradient_checkpointing bật, cache tự bị tắt
@@ -66,7 +83,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
              "hoặc checkpoint round liền trước (round N>1) — truyền tay, không tự động.",
     )
 
-    # --- RoundConfig (mục vừa thiết kế — zone/SL range + weight_table, tường minh) ---
+    # --- RoundConfig (zone/SL range + target_action_ratio + buff step/cap, tường minh) ---
     p.add_argument("--round_id", required=True, help="vd: round1, round2 — dùng đặt tên file stats/report")
     p.add_argument("--round_config", default=None, help="Path tới RoundConfig JSON — BẮT BUỘC nếu không --report_only")
 
@@ -85,7 +102,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--logging_steps", type=int, default=10)
     p.add_argument("--max_completion_length", type=int, default=64, help="think+action block ngắn (~30-40 token thực đo)")
 
-    # trong build_arg_parser(), thêm cùng nhóm với --num_generations:
     p.add_argument("--temperature", type=float, default=1.1, help="Tăng >1.0 để rollout đa dạng hơn giữa num_generations completions")
     p.add_argument("--top_p", type=float, default=1.0, help="1.0 = không cắt tail, giữ tối đa đa dạng")
     p.add_argument("--top_k", type=int, default=0, help="0/None = tắt top_k filtering")
@@ -171,6 +187,7 @@ def build_model_for_round(resume_checkpoint, init_from_repo: str | None, model_s
     logger.info(f"model.config.use_cache = {model.config.use_cache}")
     return model
 
+
 def _seed_from_round_id(round_id: str) -> int:
     """Derive 1 seed int ổn định từ round_id — mỗi round_id khác nhau
     -> seed khác nhau -> shuffle khác nhau, nhưng CÙNG round_id chạy lại
@@ -178,6 +195,7 @@ def _seed_from_round_id(round_id: str) -> int:
     vỡ tính resumable đã thiết kế (mục 6.1/6.3)."""
     import hashlib
     return int(hashlib.md5(round_id.encode()).hexdigest(), 16) % (2**31)
+
 
 def main() -> None:
     args = build_arg_parser().parse_args()
@@ -189,8 +207,8 @@ def main() -> None:
 
     if not args.round_config:
         print("--round_config bắt buộc khi train thật (không --report_only). "
-              "Mỗi round GRPO cần config tường minh (zone/SL range + weight_table), "
-              "xem app/training/reward/round_config.py.")
+              "Mỗi round GRPO cần config tường minh (zone/SL range + target_action_ratio + "
+              "buff step/cap), xem app/training/reward/round_config.py.")
         raise SystemExit(1)
     if not args.repo_id or not args.dataset_name:
         print("--repo_id và --dataset_name bắt buộc khi train thật.")
@@ -205,8 +223,10 @@ def main() -> None:
     from app.training.common import resolve_resume_checkpoint
     from app.training.reward.reward_func import (
         StatsCollector,
+        action_buffs,
         stats_collector,
         unified_reward_func,
+        update_buffs_from_stats,
     )
     from app.training.reward.round_config import RoundConfig
     import app.training.reward.reward_func as reward_func_module
@@ -227,8 +247,8 @@ def main() -> None:
 
     # ------------------------------------------------------------
     # RoundConfig — BẮT BUỘC tường minh, fail-loud nếu thiếu field
-    # (xem round_config.py). set_active_round_config() đồng bộ luôn
-    # weight_table singleton từ config.weight_table.
+    # (xem round_config.py). set_active_round_config() reset action_buffs
+    # về 0 cho round mới (buff KHÔNG mang từ round trước sang).
     # ------------------------------------------------------------
     round_config = RoundConfig.load(args.round_config)
     if round_config.round_id != args.round_id:
@@ -240,7 +260,9 @@ def main() -> None:
     logger.info(
         f"RoundConfig đã load: zone_width=[{round_config.zone_width_min_bins},{round_config.zone_width_max_bins}] "
         f"sl_dist=[{round_config.sl_min_dist_bins},{round_config.sl_max_dist_bins}] "
-        f"weight_table={round_config.weight_table}"
+        f"target_action_ratio={round_config.target_action_ratio} "
+        f"buff_step={round_config.buff_step} buff_range=[{round_config.buff_min},{round_config.buff_max}] "
+        f"K={round_config.pass_gate2_bonus} zone_score_scale={round_config.zone_score_scale}"
     )
 
     # ------------------------------------------------------------
@@ -294,6 +316,12 @@ def main() -> None:
     stats_collector._records = loaded_stats._records   # nạp lại record cũ vào đúng singleton mà reward_func dùng
     logger.info(f"[rank={rank}] StatsCollector: nạp lại {len(stats_collector._records)} record cũ từ {stats_path}")
 
+    # Nạp lại buff ngay từ record cũ (nếu resume giữa round) để buff không bị
+    # reset về 0 rồi mất vài chu kỳ save_steps mới bắt kịp lại trạng thái cũ.
+    if stats_collector._records:
+        update_buffs_from_stats(stats_collector, round_config, action_buffs)
+        logger.info(f"[rank={rank}] Buff nạp lại từ stats cũ: {action_buffs.snapshot()}")
+
     # ------------------------------------------------------------
     # Dataset GRPO — chỉ cần "prompt" (model tự sinh phần còn lại) +
     # future_bins/symbol/window_id cho reward_func — remove_unused_columns
@@ -313,14 +341,14 @@ def main() -> None:
         num_train_epochs=args.num_train_epochs,
         logging_steps=args.logging_steps,
         max_completion_length=args.max_completion_length,
-        
+
         # sample method
         temperature=args.temperature,
         top_p=args.top_p,
         top_k=args.top_k if args.top_k > 0 else None,
         min_p=args.min_p if args.min_p > 0 else None,
         repetition_penalty=args.repetition_penalty,
-    
+
         num_generations=args.num_generations,
         use_vllm=args.use_vllm,
         fp16=args.fp16,
@@ -335,13 +363,18 @@ def main() -> None:
     )
 
     # ------------------------------------------------------------
-    # Persist stats theo đúng chu kỳ save_steps (mục 4.2: "push theo chu kỳ,
-    # không phải 1 lần lúc kết thúc" — áp dụng lại triết lý đó cho stats).
+    # Persist stats + update buff theo đúng chu kỳ save_steps (mục 4.2:
+    # "push theo chu kỳ, không phải 1 lần lúc kết thúc" — áp dụng lại triết
+    # lý đó cho stats VÀ cho buff động).
     # ------------------------------------------------------------
     class StatsPersistCallback(TrainerCallback):
         def on_save(self, args, state, control, **kwargs):
             stats_collector.save(stats_path)
-            logger.info(f"[rank={rank}] Đã lưu {len(stats_collector._records)} record -> {stats_path}")
+            update_buffs_from_stats(stats_collector, round_config, action_buffs)
+            logger.info(
+                f"[rank={rank}] Đã lưu {len(stats_collector._records)} record -> {stats_path}; "
+                f"action_buffs = {action_buffs.snapshot()}"
+            )
 
         def on_train_end(self, args, state, control, **kwargs):
             stats_collector.save(stats_path)
@@ -368,6 +401,7 @@ def main() -> None:
     canonical_tok = load_tokenizer(repo_id=args.repo_id, allow_local_fallback=False)
     canonical_tok.save_pretrained(args.output_dir)
     stats_collector.save(stats_path)   # đảm bảo bản cuối cùng luôn được ghi, kể cả max_steps=nhỏ chưa chạm save_steps nào
+    update_buffs_from_stats(stats_collector, round_config, action_buffs)
 
     if push_to_hub:
         trainer.push_to_hub(commit_message=f"GRPO {args.round_id} checkpoint")
@@ -376,6 +410,7 @@ def main() -> None:
     if trainer.is_world_process_zero():
         print(f"\n=== Report round {args.round_id} (rank {rank} — chạy lại với --report_only để gộp mọi rank) ===")
         stats_collector.print_summary()
+        print(f"\naction_buffs cuối round: {action_buffs.snapshot()}")
 
 
 if __name__ == "__main__":

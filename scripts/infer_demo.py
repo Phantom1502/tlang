@@ -8,7 +8,7 @@ Giả định:
 
 Cách chạy trong Colab (1 cell):
     %cd /content/tlang
-    !python -m scripts.infer_demo --model_repo sullivan1502/base-grpo-test --n_samples 3
+    python -m scripts.infer_demo --model_repo sullivan1502/base-grpo-round1
 
 Hoặc paste thẳng nội dung dưới vào 1 cell, sửa MODEL_REPO ở main().
 """
@@ -55,7 +55,7 @@ def run_one(model, tokenizer, device, chart_text: str, max_new_tokens: int = 200
     parse_result = Parser.from_text(full_text).parse()
 
     print("-" * 70)
-    print(f"[completion] {completion_text[:200]}")
+    print(f"[completion] {completion_text}")
     print(f"well_formed = {parse_result.is_well_formed()}  well_form_score = {parse_result.well_form_score():.2f}")
     for err in parse_result.errors[:5]:
         print(f"  [{err.severity}] {err.message}")
@@ -75,7 +75,7 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--model_repo", required=True, help="vd sullivan1502/tiny-pretrain")
     p.add_argument("--tokenizer_repo", default=None, help="mặc định DEFAULT_TOKENIZER_REPO trong app/tokenizer/hub.py")
-    p.add_argument("--max_new_tokens", type=int, default=64)
+    p.add_argument("--max_new_tokens", type=int, default=128)
     p.add_argument("--greedy", action="store_true", help="tắt sampling, dùng greedy decode")
     p.add_argument("--seed", type=int, default=0)
     args = p.parse_args()

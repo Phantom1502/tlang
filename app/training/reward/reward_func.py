@@ -7,17 +7,29 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from app.lang.ast_nodes import ActionNode, ThinkNode
 from app.lang.parser import Parser
 from app.lang.semantic import SemanticChecker
-from app.training.reward.forward_test import FutureCandle, OutcomeStatus, evaluate_outcome, probe_zone_quality
+from app.training.reward.forward_test import (
+    FutureCandle,
+    OutcomeStatus,
+    evaluate_outcome,
+    probe_zone_quality,
+)
 from app.training.reward.round_config import RoundConfig
 
 R_WF_FULL = 1.0
 R_SEM_FULL = 1.0
 
+# LƯU Ý: nếu đổi 2 hằng số trên, phải sửa lại _R_WF_FULL/_R_SEM_FULL (bản copy
+# cục bộ, không import được vì circular) trong app/training/reward/round_config.py.
+
 EXTRA_SEMANTIC_PENALTY = SemanticChecker.VIOLATION_PENALTY
 
-DEFAULT_WEIGHT = 1.0
+# Chỉ 2 action này thật sự thực thi lệnh (BUY/SELL) — CANCEL_BUY/CANCEL_SELL/
+# WAIT_BUY/WAIT_SELL/HOLD KHÔNG đóng góp vào outcome_score (quyết định đã chốt:
+# "cancel action ko đóng góp vào outcome").
+OUTCOME_ACTIONS = ("BUY", "SELL")
 
 # =====================================================================
 # Best-effort "ý định" của model, đọc trực tiếp trên raw completion text —
@@ -37,32 +49,34 @@ def _extract_intended_action(completion: str) -> Optional[str]:
     return m.group(1) if m else None
 
 
-class WeightTable:
-    def __init__(self, default: float = DEFAULT_WEIGHT):
-        self._default = default
-        self._table: Dict[str, Dict[str, float]] = defaultdict(lambda: defaultdict(lambda: self._default))
+# =====================================================================
+# ActionBuffTable — THAY HOÀN TOÀN cho WeightTable cũ (nhân trọng số theo
+# trend+action_type). Lý do bỏ WeightTable: outcome BUY/SELL ~ zero-sum
+# (thêm phí thì hơi âm), nhân với 1 hệ số cố định không tạo tín hiệu học có
+# ý nghĩa, chỉ scale noise. ActionBuffTable CỘNG (không nhân) 1 giá trị học
+# động vào outcome_score, chỉ có 2 key "BUY"/"SELL" (không tách theo trend —
+# tỉ lệ target là tổng gộp toàn cục, xem update_buffs_from_stats).
+# =====================================================================
+class ActionBuffTable:
+    def __init__(self):
+        self._table: Dict[str, float] = defaultdict(float)
 
-    def get(self, trend, action_type) -> float:
-        if trend is None or action_type is None:
-            return self._default
-        return self._table[trend][action_type]
+    def get(self, action_type: Optional[str]) -> float:
+        if action_type is None:
+            return 0.0
+        return self._table.get(action_type, 0.0)
 
-    def set(self, trend, action_type, weight) -> None:
-        self._table[trend][action_type] = weight
-
-    def set_many(self, updates) -> None:
-        for trend, actions in updates.items():
-            for action_type, w in actions.items():
-                self.set(trend, action_type, w)
+    def set(self, action_type: str, value: float) -> None:
+        self._table[action_type] = value
 
     def reset(self) -> None:
         self._table.clear()
 
-    def snapshot(self):
-        return {t: dict(a) for t, a in self._table.items()}
+    def snapshot(self) -> Dict[str, float]:
+        return dict(self._table)
 
 
-weight_table = WeightTable()
+action_buffs = ActionBuffTable()
 
 _active_round_config: Optional[RoundConfig] = None
 
@@ -70,8 +84,7 @@ _active_round_config: Optional[RoundConfig] = None
 def set_active_round_config(config: RoundConfig) -> None:
     global _active_round_config
     _active_round_config = config
-    weight_table.reset()
-    weight_table.set_many(config.weight_table)
+    action_buffs.reset()   # round mới -> buff học lại từ đầu, KHÔNG mang buff round trước sang
 
 
 def get_active_round_config() -> RoundConfig:
@@ -84,12 +97,12 @@ def get_active_round_config() -> RoundConfig:
 class RolloutRecord:
     trend: Optional[str]
     action_type: Optional[str]              # action_type SAU parse — None nếu well-form fail
-    intended_action_type: Optional[str]     # MỚI — regex thô trên raw completion, có ngay cả khi well-form fail
+    intended_action_type: Optional[str]     # regex thô trên raw completion, có ngay cả khi well-form fail
     outcome_status: Optional[str]
     r_multiple: Optional[float]
     well_formed: bool
     semantic_passed: bool
-    sl_valid: Optional[bool] = None         # MỚI — chỉ có ý nghĩa với BUY/SELL
+    sl_valid: Optional[bool] = None         # chỉ có ý nghĩa với BUY/SELL
 
 
 class StatsCollector:
@@ -132,17 +145,21 @@ class StatsCollector:
                 }
         return result
 
+    def action_counts(self) -> Dict[str, int]:
+        """Đếm action_type (well_formed+semantic_passed), GỘP MỌI TREND — dùng cho
+        update_buffs_from_stats(). Tỉ lệ target là (BUY+SELL)/tổng toàn cục, không
+        tách theo trend/family — đơn giản hoá theo quyết định đã chốt."""
+        counts: Dict[str, int] = defaultdict(int)
+        for r in self._records:
+            if r.action_type is None or not (r.well_formed and r.semantic_passed):
+                continue
+            counts[r.action_type] += 1
+        return dict(counts)
+
     def summary_by_intended_action(self) -> Dict[str, Dict[str, Any]]:
         """Well-form rate theo Ý ĐỊNH (intended_action_type, có ngay cả khi
         parse fail) — tách 'model chọn action X nhiều hơn' khỏi 'action X dễ
-        sinh sai cú pháp hơn nên bị lọc rớt nhiều hơn ở summary() thường.
-
-        So sánh well_form_rate giữa 2 action cùng nhóm (vd BUY vs CANCEL_BUY):
-          - Nếu xấp xỉ nhau -> lệch tần suất trong summary() là hành vi thật.
-          - Nếu lệch rõ (vd BUY << CANCEL_BUY) -> phần lớn lệch trong
-            summary() là nhiễu cú pháp (BUY cần sinh thêm SL+RR, nhiều cơ hội
-            sai hơn) — vấn đề thuộc SFT/generator, KHÔNG phải reward design.
-        """
+        sinh sai cú pháp hơn nên bị lọc rớt nhiều hơn ở summary() thường."""
         counts: Dict[str, Dict[str, int]] = defaultdict(lambda: {"total": 0, "well_formed": 0})
         for r in self._records:
             if r.intended_action_type is None:
@@ -175,6 +192,12 @@ class StatsCollector:
         for action, stat in sorted(intended.items()):
             print(f"  {action:<12} total={stat['total']:<6} well_formed={stat['well_formed']:<6} rate={stat['well_form_rate']*100:5.1f}%")
 
+        counts = self.action_counts()
+        total = sum(counts.values())
+        buy_sell = counts.get("BUY", 0) + counts.get("SELL", 0)
+        ratio = buy_sell / total if total else 0.0
+        print(f"\n=== Tỉ lệ (BUY+SELL)/tổng action (dùng cho buff) = {ratio*100:.1f}% (n={total}) ===")
+
     def to_list(self):
         return [asdict(r) for r in self._records]
 
@@ -203,15 +226,90 @@ class StatsCollector:
 
 stats_collector = StatsCollector()
 
+RATIO_TOLERANCE = 1e-9
 
-def _compute_zone_bonus(probe_result, round_config: RoundConfig) -> float:
-    """Điểm zone-quality có dấu — symmetric bonus/penalty. TIMEOUT/INVALID_SETUP
-    trung tính (0)."""
-    if probe_result.status == OutcomeStatus.WIN:
-        return round_config.zone_quality_bonus
-    if probe_result.status == OutcomeStatus.LOSS:
-        return -round_config.zone_quality_penalty
-    return 0.0
+
+def update_buffs_from_stats(
+    stats: StatsCollector,
+    round_config: RoundConfig,
+    buffs: Optional[ActionBuffTable] = None,
+) -> None:
+    """
+    Gọi mỗi save_steps (xem StatsPersistCallback trong app/training/train_grpo.py).
+
+    actual_ratio = (BUY + SELL) / tổng toàn bộ action (well_formed + semantic_passed,
+    gộp mọi trend) — so với round_config.target_action_ratio:
+        actual < target -> buff BUY và buff SELL đều += buff_step (thiếu, nâng dần)
+        actual > target -> buff BUY và buff SELL đều -= buff_step (dư, hạ dần)
+        actual ~= target (trong RATIO_TOLERANCE) -> giữ nguyên
+    BUY và SELL LUÔN cùng 1 delta (ratio là tổng gộp, không tách riêng theo lệnh).
+    Clamp vào [buff_min, buff_max]. Không đủ dữ liệu (total=0) -> bỏ qua, giữ nguyên.
+    """
+    buffs = buffs if buffs is not None else action_buffs
+    counts = stats.action_counts()
+    total = sum(counts.values())
+    if total == 0:
+        return
+
+    actual_ratio = (counts.get("BUY", 0) + counts.get("SELL", 0)) / total
+    target_ratio = round_config.target_action_ratio
+
+    if actual_ratio < target_ratio - RATIO_TOLERANCE:
+        delta = round_config.buff_step
+    elif actual_ratio > target_ratio + RATIO_TOLERANCE:
+        delta = -round_config.buff_step
+    else:
+        delta = 0.0
+
+    for action_type in OUTCOME_ACTIONS:
+        new_buff = min(round_config.buff_max, max(round_config.buff_min, buffs.get(action_type) + delta))
+        buffs.set(action_type, new_buff)
+
+
+# =====================================================================
+# Nhánh 1 — zone quality. Áp dụng cho MỌI action có think.zone (BUY, SELL,
+# CANCEL_BUY, CANCEL_SELL, WAIT_BUY, WAIT_SELL) — HOLD (RANGE không zone)
+# luôn nhận 0.0. Liên tục theo r_multiple của probe_zone_quality (không còn
+# nhị phân bonus/penalty cố định như bản cũ).
+# =====================================================================
+def compute_zone_score(
+    think: ThinkNode,
+    future_candles: List[FutureCandle],
+    round_config: RoundConfig,
+) -> float:
+    if think.zone is None:
+        return 0.0
+    probe = probe_zone_quality(think.zone, future_candles)
+    if probe.status == OutcomeStatus.INVALID_SETUP:
+        return 0.0
+    return probe.r_multiple * round_config.zone_score_scale
+
+
+# =====================================================================
+# Nhánh 2 — outcome. CHỈ BUY/SELL (action.action_type in OUTCOME_ACTIONS).
+# CANCEL_BUY/CANCEL_SELL/WAIT_BUY/WAIT_SELL/HOLD -> 0.0 KỂ CẢ khi
+# forward_result có giá trị (CANCEL vẫn có counterfactual outcome từ
+# evaluate_outcome(), nhưng theo quyết định đã chốt, CANCEL không đóng góp
+# vào outcome_score nữa).
+# =====================================================================
+def compute_outcome_score(
+    action: ActionNode,
+    think: ThinkNode,
+    forward_result,
+    round_config: RoundConfig,
+    buffs: ActionBuffTable,
+) -> float:
+    if action.action_type not in OUTCOME_ACTIONS:
+        return 0.0
+    if forward_result is None:
+        return 0.0
+
+    buff = buffs.get(action.action_type)
+
+    risk_bins = abs(think.current_price_bin - action.sl) if action.sl is not None else 0.0
+    fee_in_r = round_config.trade_fee_bins / risk_bins if risk_bins > 0 else 0.0
+
+    return forward_result.r_multiple - fee_in_r + buff
 
 
 def score_completion(
@@ -219,9 +317,9 @@ def score_completion(
     completion: str,
     future_bins: Sequence[Sequence[int]],
     stats: Optional[StatsCollector] = None,
-    weights: Optional[WeightTable] = None,
+    buffs: Optional[ActionBuffTable] = None,
 ) -> float:
-    weights = weights if weights is not None else weight_table
+    buffs = buffs if buffs is not None else action_buffs
     round_config = get_active_round_config()
     future_candles: List[FutureCandle] = [tuple(c) for c in future_bins]
     intended_action = _extract_intended_action(completion)
@@ -229,7 +327,7 @@ def score_completion(
     parse_result = Parser.from_text(prompt + " " + completion).parse()
 
     # ------------------------------------------------------------
-    # Fail well-form
+    # Bước 1: gate well-formed — fail thì GIỮ NGUYÊN well_form_score, return ngay.
     # ------------------------------------------------------------
     if not parse_result.is_well_formed():
         if stats is not None:
@@ -259,15 +357,8 @@ def score_completion(
     )
     overall_semantic_passed = semantic_result.passed and extra_valid
 
-    # ------------------------------------------------------------
-    # sl_valid giờ là 1 PHẦN của semantic score — áp dụng KHÔNG điều kiện
-    # (bất kể phần semantic còn lại pass hay fail), CHỈ có ý nghĩa khi
-    # action_type là BUY/SELL (sl_valid is None cho action khác -> không đổi
-    # gì). Cộng khi đúng luật (dist + đúng phía zone), trừ khi sai — nhưng
-    # KHÔNG gate vào extra_valid/overall_semantic_passed (khác bug cũ đã fix:
-    # SL sai không còn làm mất sạch outcome/mất pass gate 2, chỉ ảnh hưởng
-    # đúng phần điểm số này).
-    # ------------------------------------------------------------
+    # sl_valid là 1 phần của semantic score — áp dụng KHÔNG điều kiện (bất kể phần
+    # semantic còn lại pass hay fail), CHỈ có ý nghĩa khi action_type là BUY/SELL.
     sem_score = semantic_result.score
     if semantic_result.passed and not extra_valid:
         sem_score = max(0.0, sem_score - EXTRA_SEMANTIC_PENALTY)
@@ -278,7 +369,7 @@ def score_completion(
     sem_score = max(0.0, sem_score)
 
     # ------------------------------------------------------------
-    # Fail semantic (bao gồm sl_valid đã gộp ở trên)
+    # Bước 1 (tiếp): gate semantic — fail thì GIỮ NGUYÊN R_WF_FULL + sem_score, return.
     # ------------------------------------------------------------
     if not overall_semantic_passed:
         if stats is not None:
@@ -290,28 +381,16 @@ def score_completion(
         return R_WF_FULL + sem_score
 
     # ==============================================================
-    # PASS cả 2 gate — rẽ nhánh theo mode
+    # Bước 1 PASS cả 2 gate — K đồng đều (mọi mẫu tới đây coi như nhau ở mức
+    # sàn), rồi cộng 2 nhánh SONG SONG (bước 2):
+    #   - zone_score:    mọi action có zone (BUY/SELL/CANCEL_*/WAIT_*)
+    #   - outcome_score: CHỈ BUY/SELL
+    # Bước 3: reward = K + zone_score + outcome_score
     # ==============================================================
-    # Round 2: điểm ngữ nghĩa không còn ý nghĩa nữa (đã dùng hết ở round 1)
-    # — mọi mẫu pass gate đều có SÀN TUYỆT ĐỐI = K, không cộng R_WF_FULL/
-    # R_SEM_FULL/zone_bonus/sl_bonus nào cả. Chỉ còn outcome thật quyết định.
     K = round_config.pass_gate2_bonus
-    w = weights.get(trend, action_type)
-
-    if action_type in ("HOLD", "WAIT_BUY", "WAIT_SELL"):
-        reward = K   # không có outcome để tính — sàn tuyệt đối, không hơn không kém
-
-    elif action_type in ("CANCEL_BUY", "CANCEL_SELL"):
-        reward = K - 0.1 # Nếu BUY/SELL ko kéo nổi lên thì có nghĩa là zone này tệ
-
-    elif action_type in ("BUY", "SELL"):
-        risk_bins = abs(think.current_price_bin - action.sl)
-        fee_in_r = round_config.trade_fee_bins / risk_bins if risk_bins > 0 else 0.0
-        net_r_multiple = forward_result.r_multiple - fee_in_r + round_config.buff_action
-        reward = K + net_r_multiple * w
-
-    else:
-        reward = K
+    zone_score = compute_zone_score(think, future_candles, round_config)
+    outcome_score = compute_outcome_score(action, think, forward_result, round_config, buffs)
+    reward = K + zone_score + outcome_score
 
     if stats is not None:
         stats.log(RolloutRecord(
@@ -330,6 +409,6 @@ def unified_reward_func(
     **kwargs: Any,
 ) -> List[float]:
     return [
-        score_completion(prompt, completion, fb, stats=stats_collector, weights=weight_table)
+        score_completion(prompt, completion, fb, stats=stats_collector, buffs=action_buffs)
         for prompt, completion, fb in zip(prompts, completions, future_bins)
     ]
