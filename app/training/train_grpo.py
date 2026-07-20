@@ -228,6 +228,7 @@ def main() -> None:
         stats_collector,
         unified_reward_func,
         update_buffs_from_stats,
+        OUTCOME_ACTIONS,
     )
     from app.training.reward.round_config import RoundConfig
     import app.training.reward.reward_func as reward_func_module
@@ -323,7 +324,7 @@ def main() -> None:
         # Lần đầu tiên round này chạy (chưa từng có checkpoint) -> khởi tạo từ
         # round_config.buff_init thay vì mặc định 0.0, để rút ngắn thời gian
         # buff phải "leo" từ đáy lên mức hữu ích ban đầu.
-        for action_type in RoundConfig.OUTCOME_ACTIONS:
+        for action_type in OUTCOME_ACTIONS:
             action_buffs.set(action_type, round_config.buff_init)
         logger.info(f"[rank={rank}] Chưa có stats cũ — khởi tạo action_buffs = buff_init = {round_config.buff_init}")
     hold_buff.set(loaded_hold)
