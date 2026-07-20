@@ -49,7 +49,6 @@ class RoundConfig:
     buff_step: float
     buff_max: float
     buff_min: float = 0.0
-    pure_outcome_mode: bool = True
 
     def __post_init__(self) -> None:
         """
@@ -126,7 +125,6 @@ class RoundConfig:
             buff_step=float(data["buff_step"]),
             buff_max=float(data["buff_max"]),
             buff_min=float(data.get("buff_min", 0.0)),
-            pure_outcome_mode=bool(data.get("pure_outcome_mode", True)),
         )
 
     def save(self, path: str) -> None:
