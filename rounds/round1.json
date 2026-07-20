@@ -11,11 +11,11 @@
   "trade_fee_bins": 0.65,
   "target_action_ratio": 0.25,
   "buff_step": 0.05,
-  "buff_max": 2.0,
+  "buff_max": 1.0,
   "buff_min": 0.0,
   "buff_init": 1.0,
   "target_hold_ratio": 0.1,
   "hold_buff_step": 0.02,
-  "hold_buff_max": 0.3,
+  "hold_buff_max": 0.2,
   "hold_buff_min": 0.0
 }
