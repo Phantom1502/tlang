@@ -16,10 +16,10 @@
 
   "ema_alpha": 0.9,
   "buff_kp": 0.02,
-  "buff_step_max": 0.005,
+  "buff_step_max": 0.0005,
 
   "trade_buff_min": 0.0,  "trade_buff_max": 2.0,  "trade_buff_init": 0.70,
-  "hold_buff_min": 0.0,   "hold_buff_max": 0.3,   "hold_buff_init": 0.00,
-  "cancel_buff_min": 0.0, "cancel_buff_max": 0.3, "cancel_buff_init": 0.00,
+  "hold_buff_min": 0.0,   "hold_buff_max": 0.15,   "hold_buff_init": 0.00,
+  "cancel_buff_min": 0.0, "cancel_buff_max": 0.23, "cancel_buff_init": 0.00,
   "wait_buff_min": 0.0,   "wait_buff_max": 0.3,   "wait_buff_init": 0.00
 }
