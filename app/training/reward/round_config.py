@@ -59,6 +59,7 @@ class RoundConfig:
     hold_buff_step: float = 0.0
     hold_buff_max: float = 0.0
     hold_buff_min: float = 0.0
+    hold_buff_init: Optional[float] = None
 
     def __post_init__(self) -> None:
         """
@@ -83,6 +84,13 @@ class RoundConfig:
             raise ValueError(
                 f"buff_init ({self.buff_init}) phải nằm trong [buff_min, buff_max] "
                 f"= [{self.buff_min}, {self.buff_max}]."
+            )
+        if self.hold_buff_init is None:
+            self.hold_buff_init = self.hold_buff_min
+        if not (self.hold_buff_min <= self.hold_buff_init <= self.hold_buff_max):
+            raise ValueError(
+                f"hold_buff_init ({self.hold_buff_init}) phải nằm trong [hold_buff_min, hold_buff_max] "
+                f"= [{self.hold_buff_min}, {self.hold_buff_max}]."
             )
         if not (0.0 <= self.target_action_ratio <= 1.0):
             raise ValueError(f"target_action_ratio phải trong [0,1], nhận {self.target_action_ratio}.")
@@ -161,6 +169,7 @@ class RoundConfig:
             hold_buff_max=float(data["hold_buff_max"]),
             hold_buff_min=float(data["hold_buff_min"]),
             buff_init=data.get("buff_init"),  # None nếu file JSON không có field này
+            hold_buff_init=data.get("hold_buff_init"),
         )
 
     def save(self, path: str) -> None:
