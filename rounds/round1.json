@@ -1,5 +1,5 @@
 {
-  "round_id": "round2",
+  "round_id": "round1",
   "zone_width_min_bins": 5,
   "zone_width_max_bins": 20,
   "sl_min_dist_bins": 5,
@@ -19,7 +19,7 @@
   "buff_step_max": 0.005,
 
   "trade_buff_min": 0.0,  "trade_buff_max": 2.0,  "trade_buff_init": 0.70,
-  "hold_buff_min": 0.0,   "hold_buff_max": 0.5,   "hold_buff_init": 0.00,
-  "cancel_buff_min": 0.0, "cancel_buff_max": 0.5, "cancel_buff_init": 0.00,
-  "wait_buff_min": 0.0,   "wait_buff_max": 0.5,   "wait_buff_init": 0.00
+  "hold_buff_min": 0.0,   "hold_buff_max": 0.3,   "hold_buff_init": 0.00,
+  "cancel_buff_min": 0.0, "cancel_buff_max": 0.3, "cancel_buff_init": 0.00,
+  "wait_buff_min": 0.0,   "wait_buff_max": 0.3,   "wait_buff_init": 0.00
 }
