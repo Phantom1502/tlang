@@ -1,0 +1,21 @@
+{
+  "round_id": "round1",
+  "zone_width_min_bins": 5,
+  "zone_width_max_bins": 50,
+  "sl_min_dist_bins": 5,
+  "sl_max_dist_bins": 50,
+  "pass_gate2_bonus": 4.5,
+  "zone_score_scale": 0.3,
+  "sl_valid_bonus": 0.2,
+  "sl_valid_penalty": 0.2,
+  "trade_fee_bins": 0.65,
+  "target_action_ratio": 0.25,
+  "buff_step": 0.01,
+  "buff_max": 0.9,
+  "buff_min": 0.0,
+  "buff_init": 0.8,
+  "target_hold_ratio": 0.1,
+  "hold_buff_step": 0.01,
+  "hold_buff_max": 0.2,
+  "hold_buff_min": 0.0
+}

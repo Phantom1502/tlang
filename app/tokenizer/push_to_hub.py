@@ -9,7 +9,7 @@ Yêu cầu trước khi chạy:
     # hoặc: export HF_TOKEN=hf_xxx
 
 Usage:
-    python -m app.tokenizer.push_to_hub --repo_id sullivan1502/base-grpo-test
+    python -m app.tokenizer.push_to_hub --repo_id sullivan1502/base-grpo-round2
     python -m app.tokenizer.push_to_hub --repo_id <org>/trading-llm-tokenizer --private
     python -m app.tokenizer.push_to_hub --repo_id <org>/trading-llm-tokenizer --dry_run
 """
