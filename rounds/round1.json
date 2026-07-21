@@ -17,6 +17,6 @@
   "target_hold_ratio": 0.1,
   "hold_buff_step": 0.005,
   "hold_buff_max": 0.1,
-  "hold_buff_min": 0.0,
+  "hold_buff_min": -0.1,
   "hold_buff_init": 0.0
 }
