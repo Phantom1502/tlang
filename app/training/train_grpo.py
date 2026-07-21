@@ -261,9 +261,14 @@ def main() -> None:
     logger.info(
         f"RoundConfig đã load: zone_width=[{round_config.zone_width_min_bins},{round_config.zone_width_max_bins}] "
         f"sl_dist=[{round_config.sl_min_dist_bins},{round_config.sl_max_dist_bins}] "
-        f"target_action_ratio={round_config.target_action_ratio} "
-        f"buff_step={round_config.buff_step} buff_range=[{round_config.buff_min},{round_config.buff_max}] "
-        f"K={round_config.pass_gate2_bonus} zone_score_scale={round_config.zone_score_scale}"
+        f"target_hold_ratio={round_config.target_hold_ratio} "
+        f"target_trade_ratio={round_config.target_trade_ratio} "
+        f"target_cancel_ratio={round_config.target_cancel_ratio} "
+        f"ema_alpha={round_config.ema_alpha} buff_kp={round_config.buff_kp} buff_step_max={round_config.buff_step_max} "
+        f"trade_buff_min={round_config.trade_buff_min} trade_buff_max={round_config.trade_buff_max} "
+        f"hold_buff_min={round_config.hold_buff_min} hold_buff_max={round_config.hold_buff_max} "
+        f"cancel_buff_min={round_config.cancel_buff_min} cancel_buff_max={round_config.cancel_buff_max} "
+        f"wait_buff_min={round_config.wait_buff_min} wait_buff_max={round_config.wait_buff_max}"
     )
 
     # ------------------------------------------------------------
