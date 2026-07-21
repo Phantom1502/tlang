@@ -218,20 +218,19 @@ def main() -> None:
     from datasets import load_dataset
     from trl import GRPOConfig, GRPOTrainer
     from transformers import TrainerCallback
+    
+    from app.training.reward.reward_func import (
+        StatsCollector,
+        buff_controller,
+        stats_collector,
+        unified_reward_func,
+    )
+    from app.training.reward.round_config import RoundConfig
+    from transformers.trainer_utils import PREFIX_CHECKPOINT_DIR
+    import app.training.reward.reward_func as reward_func_module
 
     from app.tokenizer.hub import load_tokenizer
     from app.training.common import resolve_resume_checkpoint
-    from app.training.reward.reward_func import (
-        StatsCollector,
-        action_buffs,
-        hold_buff,
-        stats_collector,
-        unified_reward_func,
-        update_buffs_from_stats,
-        OUTCOME_ACTIONS,
-    )
-    from app.training.reward.round_config import RoundConfig
-    import app.training.reward.reward_func as reward_func_module
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     logger.info(f"Device: {device}")
@@ -314,35 +313,33 @@ def main() -> None:
     # ------------------------------------------------------------
     rank = int(os.environ.get("RANK", os.environ.get("LOCAL_RANK", "0")))
     stats_path = _stats_path_for_rank(args.output_dir, args.round_id, rank)
-    loaded_stats, loaded_buffs, loaded_hold = StatsCollector.load(stats_path)
-    stats_collector._records = loaded_stats._records
-    if loaded_buffs:
-        # Có file cũ (resume giữa round) -> khôi phục ĐÚNG giá trị đã học, không dùng buff_init.
-        for action_type, value in loaded_buffs.items():
-            action_buffs.set(action_type, value)
-        hold_buff.set(loaded_hold)
-    else:
-        # Lần đầu tiên round này chạy (chưa từng có checkpoint) -> khởi tạo từ
-        # round_config.buff_init thay vì mặc định 0.0, để rút ngắn thời gian
-        # buff phải "leo" từ đáy lên mức hữu ích ban đầu.
-        for action_type in OUTCOME_ACTIONS:
-            action_buffs.set(action_type, round_config.buff_init)
-        hold_buff.set(round_config.hold_buff_init)
-        logger.info(f"[rank={rank}] Chưa có stats cũ — khởi tạo action_buffs = buff_init = {round_config.buff_init}")
-    logger.info(
-        f"[rank={rank}] StatsCollector: nạp lại {len(stats_collector._records)} record của chu kỳ dở "
-        f"(nếu session bị ngắt giữa chừng); action_buffs khôi phục = {action_buffs.snapshot()}; "
-        f"hold_buff khôi phục = {hold_buff.get()}"
-    )
+    stats_collector._records = StatsCollector.load(stats_path)._records
+    logger.info(f"[rank={rank}] StatsCollector (report-only): nạp lại {len(stats_collector._records)} record cũ.")
 
-    # Nạp lại buff ngay từ record cũ (nếu resume giữa round) để buff không bị
-    # reset về 0 rồi mất vài chu kỳ save_steps mới bắt kịp lại trạng thái cũ.
-    if stats_collector._records:
-        update_buffs_from_stats(stats_collector, round_config, action_buffs, hold=hold_buff)
-        logger.info(
-            f"[rank={rank}] Buff nạp lại từ stats cũ: {action_buffs.snapshot()}; "
-            f"hold_buff = {hold_buff.get()}"
-        )
+    # ------------------------------------------------------------
+    # buff_controller state — GẮN VÀO CHECKPOINT (reward_state.json trong
+    # chính thư mục checkpoint), KHÔNG tách rời ở output_dir như stats. Chỉ
+    # load khi RESUME CHÍNH ROUND NÀY (resume_checkpoint != None) — round MỚI
+    # init từ round trước (--init_from_repo) LUÔN seed lại từ round_config,
+    # không mang state buff của round khác sang (target ratio đã đổi giữa
+    # các round).
+    # ------------------------------------------------------------
+    buff_loaded = False
+    if resume_checkpoint is not None:
+        buff_state_path = os.path.join(resume_checkpoint, "reward_state.json")
+        buff_loaded = buff_controller.load(buff_state_path)
+        if buff_loaded:
+            logger.info(f"[rank={rank}] Đã khôi phục buff_controller từ {buff_state_path}: {buff_controller.snapshot()}")
+        else:
+            logger.warning(
+                f"[rank={rank}] Không đọc được {buff_state_path} (thiếu file hoặc lỗi parse) — có "
+                f"thể do checkpoint này được tải lại từ Hub và thứ tự save/push chưa đảm bảo file "
+                f"custom được đưa vào 'last-checkpoint/'. Fallback: seed lại từ round_config — MẤT "
+                f"continuity của buff, KHÔNG mất tính đúng đắn."
+            )
+    if not buff_loaded:
+        buff_controller.seed_from_round_config(round_config)
+        logger.info(f"[rank={rank}] Seed buff_controller từ round_config: {buff_controller.snapshot()}")
 
     # ------------------------------------------------------------
     # Dataset GRPO — chỉ cần "prompt" (model tự sinh phần còn lại) +
@@ -384,36 +381,40 @@ def main() -> None:
         report_to=[],
     )
 
-    # ------------------------------------------------------------
-    # Persist stats + update buff theo đúng chu kỳ save_steps (mục 4.2:
-    # "push theo chu kỳ, không phải 1 lần lúc kết thúc" — áp dụng lại triết
-    # lý đó cho stats VÀ cho buff động).
-    # ------------------------------------------------------------
     class StatsPersistCallback(TrainerCallback):
+        def on_step_end(self, args, state, control, **kwargs):
+            # EMA + proportional update — 1 LẦN / optimizer step, KHÔNG phụ
+            # thuộc save_steps (decouple hẳn khỏi checkpoint cadence).
+            buff_controller.on_step_end(round_config)
+
         def on_save(self, args, state, control, **kwargs):
             n_records = len(stats_collector._records)
 
-            update_buffs_from_stats(stats_collector, round_config, action_buffs, hold=hold_buff)
-
-            # In thống kê CHU KỲ VỪA XONG ra console — không cần --report_only nữa,
-            # vì stats_collector sắp bị reset() ngay sau đây (chỉ chứa đúng chu kỳ này).
-            print(f"\n=== [step={state.global_step}] Chu kỳ vừa xong ({n_records} record) ===")
+            print(f"\n=== [step={state.global_step}] Chu kỳ report vừa xong ({n_records} record) ===")
             stats_collector.print_summary()
-            print(f"action_buffs sau update: {action_buffs.snapshot()}  hold_buff: {hold_buff.get()}\n")
+            print(f"buff_controller hiện tại: {buff_controller.snapshot()}\n")
 
-            stats_collector.save(stats_path, buffs=action_buffs, hold=hold_buff)
-            logger.info(
-                f"[rank={rank}] Đã lưu {n_records} record -> {stats_path}; "
-                f"action_buffs = {action_buffs.snapshot()}; hold_buff = {hold_buff.get()}"
-            )
+            stats_collector.save(stats_path)
             stats_collector.reset()
 
+            # Ghi reward_state.json vào ĐÚNG thư mục checkpoint vừa save — best
+            # effort. Nếu push_to_hub("checkpoint") chạy TRƯỚC on_save trong
+            # version transformers đang cài, bản trên Hub có thể thiếu file
+            # này; load() ở lần resume sau tự fallback seed lại từ
+            # round_config, không crash (đã chốt đây là edge case chấp nhận
+            # được, không chặn thiết kế).
+            ckpt_dir = os.path.join(args.output_dir, f"{PREFIX_CHECKPOINT_DIR}-{state.global_step}")
+            if os.path.isdir(ckpt_dir):
+                buff_controller.save(os.path.join(ckpt_dir, "reward_state.json"))
+                logger.info(f"[rank={rank}] Đã lưu reward_state -> {ckpt_dir}/reward_state.json")
+            else:
+                logger.warning(f"[rank={rank}] Checkpoint dir {ckpt_dir} chưa tồn tại lúc on_save — bỏ qua lưu reward_state.")
+
         def on_train_end(self, args, state, control, **kwargs):
-            update_buffs_from_stats(stats_collector, round_config, action_buffs, hold=hold_buff)
-            print(f"\n=== [train_end] Chu kỳ cuối cùng ===")
+            print(f"\n=== [train_end] Chu kỳ report cuối cùng ===")
             stats_collector.print_summary()
-            print(f"action_buffs cuối: {action_buffs.snapshot()}  hold_buff cuối: {hold_buff.get()}\n")
-            stats_collector.save(stats_path, buffs=action_buffs, hold=hold_buff)
+            print(f"buff_controller cuối: {buff_controller.snapshot()}\n")
+            stats_collector.save(stats_path)
 
     trainer = GRPOTrainer(
         model=model,
@@ -427,17 +428,10 @@ def main() -> None:
     trainer.train(resume_from_checkpoint=resume_checkpoint)
 
     trainer.save_model()
-    # QUAN TRỌNG: lưu tokenizer CANONICAL (load lại fresh, KHÔNG dùng `tok` đã
-    # bị mutate add_eos_token/add_bos_token ở trên) — artifact cuối cùng push
-    # lên Hub phải khớp đúng tokenizer chuẩn (docs/tokenizer_v0.1.md: tokenizer
-    # là artifact bất biến), không mang theo quirk chỉ cần cho lúc rollout nội
-    # bộ GRPOTrainer. Các checkpoint TRUNG GIAN (save_steps) vẫn mang tokenizer
-    # đã mutate — chấp nhận được vì pipeline không tự đọc lại từ đó (xem giải
-    # thích ở chỗ set add_eos_token phía trên).
     canonical_tok = load_tokenizer(repo_id=args.repo_id, allow_local_fallback=False)
     canonical_tok.save_pretrained(args.output_dir)
-    update_buffs_from_stats(stats_collector, round_config, action_buffs, hold=hold_buff)
-    stats_collector.save(stats_path, buffs=action_buffs, hold=hold_buff)   # chu kỳ cuối cùng chưa kịp chạm save_steps
+    buff_controller.save(os.path.join(args.output_dir, "reward_state.json"))
+    stats_collector.save(stats_path)
     
     if push_to_hub:
         trainer.push_to_hub(commit_message=f"GRPO {args.round_id} checkpoint")
@@ -446,7 +440,6 @@ def main() -> None:
     if trainer.is_world_process_zero():
         print(f"\n=== Report round {args.round_id} (rank {rank} — chạy lại với --report_only để gộp mọi rank) ===")
         stats_collector.print_summary()
-        print(f"\naction_buffs cuối round: {action_buffs.snapshot()}  hold_buff cuối round: {hold_buff.get()}")
 
 
 if __name__ == "__main__":

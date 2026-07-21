@@ -27,81 +27,183 @@ R_SEM_FULL = 1.0
 EXTRA_SEMANTIC_PENALTY = SemanticChecker.VIOLATION_PENALTY
 
 # Chỉ 2 action này thật sự thực thi lệnh (BUY/SELL) — CANCEL_BUY/CANCEL_SELL/
-# WAIT_BUY/WAIT_SELL/HOLD KHÔNG đóng góp vào outcome_score (quyết định đã chốt:
-# "cancel action ko đóng góp vào outcome").
+# WAIT_BUY/WAIT_SELL/HOLD KHÔNG đóng góp vào outcome_score.
 OUTCOME_ACTIONS = ("BUY", "SELL")
 
-# =====================================================================
-# Best-effort "ý định" của model, đọc trực tiếp trên raw completion text —
-# KHÔNG cần parse thành công. Dùng để tách "model chọn action X" khỏi
-# "model định làm X nhưng sinh sai cú pháp" (2 nguyên nhân hoàn toàn khác
-# nhau khi đọc lệch tần suất trong StatsCollector — xem docs/reward_design.md
-# mục "intended vs realized action").
-# =====================================================================
 _ACTION_TYPE_RE = re.compile(r"\b(CANCEL_BUY|CANCEL_SELL|WAIT_BUY|WAIT_SELL|BUY|SELL|HOLD)\b")
 
 
 def _extract_intended_action(completion: str) -> Optional[str]:
     """Token ACTION_TYPE đầu tiên xuất hiện trong completion, bất kể completion
-    có well-formed hay không — best-effort, không dùng để tính reward, CHỈ
-    dùng cho thống kê."""
+    có well-formed hay không — best-effort, chỉ dùng cho thống kê/report."""
     m = _ACTION_TYPE_RE.search(completion)
     return m.group(1) if m else None
 
 
 # =====================================================================
-# ActionBuffTable — THAY HOÀN TOÀN cho WeightTable cũ (nhân trọng số theo
-# trend+action_type). Lý do bỏ WeightTable: outcome BUY/SELL ~ zero-sum
-# (thêm phí thì hơi âm), nhân với 1 hệ số cố định không tạo tín hiệu học có
-# ý nghĩa, chỉ scale noise. ActionBuffTable CỘNG (không nhân) 1 giá trị học
-# động vào outcome_score, chỉ có 2 key "BUY"/"SELL" (không tách theo trend —
-# tỉ lệ target là tổng gộp toàn cục, xem update_buffs_from_stats).
+# EMABuffController — THAY HOÀN TOÀN cho ActionBuffTable + HoldBuff +
+# update_buffs_from_stats (bang-bang theo chu kỳ save_steps) trước đây.
+#
+# 4 nhóm action: HOLD | TRADE (BUY+SELL gộp chung 1 buff) | CANCEL
+# (CANCEL_BUY+CANCEL_SELL) | WAIT (WAIT_BUY+WAIT_SELL). BUY/SELL gộp chung
+# vì trong cơ chế cũ, buff của 2 key "BUY"/"SELL" LUÔN được cộng cùng 1
+# delta (cùng actual_ratio = (BUY+SELL)/tổng) — tức về bản chất đã luôn là
+# 1 buff dùng chung, chỉ lưu dưới 2 key trùng giá trị. Gộp lại ở đây là
+# đơn giản hoá hợp lệ, không đổi ngữ nghĩa.
+#
+# Cơ chế, TÁCH RỜI hẳn khỏi save_steps:
+#   1. record(action_type): gọi trong score_completion() cho MỖI sample
+#      well_formed + semantic_passed — đúng logic action_counts() cũ.
+#   2. on_step_end(round_config): gọi 1 LẦN / optimizer step (KHÔNG phải
+#      mỗi save_steps) — với MỖI nhóm:
+#         rate_this_step = count_nhóm_trong_step / tổng_count_trong_step
+#         ema_ratio = (1-alpha)*rate_this_step + alpha*ema_ratio_cũ
+#         delta = clip(kp * (target - ema_ratio), -step_max, +step_max)
+#         buff = clip(buff + delta, group_min, group_max)
+#
+# State (ema_ratio + buff, MỌI nhóm) PHẢI persist vào reward_state.json BÊN
+# TRONG thư mục checkpoint (không phải ở output_dir rời như StatsCollector
+# trước đây) — xem save()/load() và cách gọi ở train_grpo.py. Đây là state
+# DUY NHẤT cần sống sót qua resume; StatsCollector giờ CHỈ còn vai trò
+# report (xem docstring StatsCollector bên dưới).
 # =====================================================================
-class ActionBuffTable:
+GROUPS = ("HOLD", "TRADE", "CANCEL", "WAIT")
+
+GROUP_OF_ACTION: Dict[str, str] = {
+    "HOLD": "HOLD",
+    "BUY": "TRADE", "SELL": "TRADE",
+    "CANCEL_BUY": "CANCEL", "CANCEL_SELL": "CANCEL",
+    "WAIT_BUY": "WAIT", "WAIT_SELL": "WAIT",
+}
+
+
+def _clip(x: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, x))
+
+
+def _group_target(group: str, rc: RoundConfig) -> float:
+    return {
+        "HOLD": rc.target_hold_ratio, "TRADE": rc.target_trade_ratio,
+        "CANCEL": rc.target_cancel_ratio, "WAIT": rc.target_wait_ratio,
+    }[group]
+
+
+def _group_range(group: str, rc: RoundConfig) -> Tuple[float, float]:
+    return {
+        "HOLD": (rc.hold_buff_min, rc.hold_buff_max),
+        "TRADE": (rc.trade_buff_min, rc.trade_buff_max),
+        "CANCEL": (rc.cancel_buff_min, rc.cancel_buff_max),
+        "WAIT": (rc.wait_buff_min, rc.wait_buff_max),
+    }[group]
+
+
+def _group_init(group: str, rc: RoundConfig) -> float:
+    return {
+        "HOLD": rc.hold_buff_init, "TRADE": rc.trade_buff_init,
+        "CANCEL": rc.cancel_buff_init, "WAIT": rc.wait_buff_init,
+    }[group]
+
+
+@dataclass
+class GroupBuffState:
+    ema_ratio: float
+    buff: float
+
+
+class EMABuffController:
     def __init__(self):
-        self._table: Dict[str, float] = defaultdict(float)
+        self.states: Dict[str, GroupBuffState] = {}
+        self._counts: Dict[str, int] = defaultdict(int)
+        self._total: int = 0
 
-    def get(self, action_type: Optional[str]) -> float:
-        if action_type is None:
+    def seed_from_round_config(self, round_config: RoundConfig) -> None:
+        """Dùng khi round MỚI bắt đầu (không có state cũ để resume) — seed
+        ema_ratio = target (giả định 'đã ở điểm cân bằng' lúc khởi động, tránh
+        vài trăm step đầu buff phản ứng nhầm hướng do ema=0), buff = group_init
+        (dò bằng thực nghiệm trước khi train thật)."""
+        for group in GROUPS:
+            self.states[group] = GroupBuffState(
+                ema_ratio=_group_target(group, round_config),
+                buff=_group_init(group, round_config),
+            )
+        self._counts.clear()
+        self._total = 0
+
+    def record(self, action_type: Optional[str]) -> None:
+        group = GROUP_OF_ACTION.get(action_type) if action_type else None
+        if group is None:
+            return
+        self._counts[group] += 1
+        self._total += 1
+
+    def on_step_end(self, round_config: RoundConfig) -> None:
+        """Gọi 1 lần / optimizer step (TrainerCallback.on_step_end). Nếu step
+        này KHÔNG có sample nào well_formed+semantic_passed (total=0) thì bỏ
+        qua — giữ nguyên ema/buff cũ, tránh update dựa trên rate=0/0 vô nghĩa."""
+        if self._total == 0:
+            return
+        for group in GROUPS:
+            rate_this_step = self._counts.get(group, 0) / self._total
+            st = self.states[group]
+            st.ema_ratio = (1.0 - round_config.ema_alpha) * rate_this_step + round_config.ema_alpha * st.ema_ratio
+            lo, hi = _group_range(group, round_config)
+            delta = round_config.buff_kp * (_group_target(group, round_config) - st.ema_ratio)
+            delta = _clip(delta, -round_config.buff_step_max, round_config.buff_step_max)
+            st.buff = _clip(st.buff + delta, lo, hi)
+        self._counts.clear()
+        self._total = 0
+
+    def get_buff(self, action_type: Optional[str]) -> float:
+        group = GROUP_OF_ACTION.get(action_type) if action_type else None
+        if group is None or group not in self.states:
             return 0.0
-        return self._table.get(action_type, 0.0)
+        return self.states[group].buff
 
-    def set(self, action_type: str, value: float) -> None:
-        self._table[action_type] = value
+    def snapshot(self) -> Dict[str, Dict[str, float]]:
+        return {g: {"ema_ratio": s.ema_ratio, "buff": s.buff} for g, s in self.states.items()}
 
-    def reset(self) -> None:
-        self._table.clear()
+    def state_dict(self) -> Dict[str, Dict[str, float]]:
+        return self.snapshot()
 
-    def snapshot(self) -> Dict[str, float]:
-        return dict(self._table)
+    def load_state_dict(self, data: Dict[str, Dict[str, float]]) -> None:
+        for group, d in data.items():
+            self.states[group] = GroupBuffState(ema_ratio=float(d["ema_ratio"]), buff=float(d["buff"]))
+
+    def save(self, path: str) -> None:
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(self.state_dict(), ensure_ascii=False), encoding="utf-8")
+
+    def load(self, path: str) -> bool:
+        """Trả True nếu load thành công, False nếu không (thiếu file hoặc lỗi
+        parse). Caller (train_grpo.py) PHẢI gọi seed_from_round_config() khi
+        trả về False — KHÔNG được để states rỗng (get_buff sẽ âm thầm trả 0.0
+        cho group thiếu, che mất bug thay vì báo lỗi rõ ràng)."""
+        p = Path(path)
+        if not p.exists():
+            return False
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+            self.load_state_dict(data)
+            return True
+        except Exception:
+            return False
 
 
-action_buffs = ActionBuffTable()
+buff_controller = EMABuffController()
 
 _active_round_config: Optional[RoundConfig] = None
 
-class HoldBuff:
-    def __init__(self):
-        self._value: float = 0.0
-
-    def get(self) -> float:
-        return self._value
-
-    def set(self, value: float) -> None:
-        self._value = value
-
-    def reset(self) -> None:
-        self._value = 0.0
-
-
-hold_buff = HoldBuff()
 
 def set_active_round_config(config: RoundConfig) -> None:
+    """CHỈ set config — KHÔNG tự động seed/reset buff_controller (khác hành
+    vi cũ của hàm này). Seed (round mới) hay load (resume) state là quyết
+    định CẦN BIẾT NGỮ CẢNH CHECKPOINT, thuộc về train_grpo.py — xem docstring
+    EMABuffController."""
     global _active_round_config
     _active_round_config = config
-    action_buffs.reset()
-    hold_buff.reset()
-    
+
+
 def get_active_round_config() -> RoundConfig:
     if _active_round_config is None:
         raise RuntimeError("Chưa load RoundConfig — gọi set_active_round_config(RoundConfig.load(path)) trước.")
@@ -111,16 +213,22 @@ def get_active_round_config() -> RoundConfig:
 @dataclass
 class RolloutRecord:
     trend: Optional[str]
-    action_type: Optional[str]              # action_type SAU parse — None nếu well-form fail
-    intended_action_type: Optional[str]     # regex thô trên raw completion, có ngay cả khi well-form fail
+    action_type: Optional[str]
+    intended_action_type: Optional[str]
     outcome_status: Optional[str]
     r_multiple: Optional[float]
     well_formed: bool
     semantic_passed: bool
-    sl_valid: Optional[bool] = None         # chỉ có ý nghĩa với BUY/SELL
+    sl_valid: Optional[bool] = None
 
 
 class StatsCollector:
+    """CHỈ còn vai trò REPORT (in summary, đọc phân phối trend/action/outcome)
+    — KHÔNG còn liên quan gì tới buff nữa (buff giờ do EMABuffController quản
+    lý, persist riêng trong checkpoint, xem module-level docstring phía trên).
+    save()/load() giờ chỉ còn field "records", không còn "action_buffs"/
+    "hold_buff" như bản cũ."""
+
     def __init__(self):
         self._records: List[RolloutRecord] = []
 
@@ -131,9 +239,6 @@ class StatsCollector:
         self._records.clear()
 
     def summary(self):
-        """Thống kê theo action_type SAU parse — chỉ record well_formed+semantic_passed.
-        Dùng để đọc outcome/timing thật, KHÔNG dùng để đọc tần suất ý định (xem
-        summary_by_intended_action bên dưới cho việc đó)."""
         by_trend_total = defaultdict(int)
         raw = defaultdict(lambda: defaultdict(lambda: {"count": 0, "r_multiples": []}))
         for r in self._records:
@@ -161,9 +266,6 @@ class StatsCollector:
         return result
 
     def action_counts(self) -> Dict[str, int]:
-        """Đếm action_type (well_formed+semantic_passed), GỘP MỌI TREND — dùng cho
-        update_buffs_from_stats(). Tỉ lệ target là (BUY+SELL)/tổng toàn cục, không
-        tách theo trend/family — đơn giản hoá theo quyết định đã chốt."""
         counts: Dict[str, int] = defaultdict(int)
         for r in self._records:
             if r.action_type is None or not (r.well_formed and r.semantic_passed):
@@ -171,10 +273,17 @@ class StatsCollector:
             counts[r.action_type] += 1
         return dict(counts)
 
+    def group_counts(self) -> Dict[str, int]:
+        """Đếm theo 4 nhóm (HOLD/TRADE/CANCEL/WAIT) — khớp đúng cách
+        EMABuffController.record() đang đếm, tiện đối chiếu khi debug."""
+        counts: Dict[str, int] = defaultdict(int)
+        for action_type, n in self.action_counts().items():
+            group = GROUP_OF_ACTION.get(action_type)
+            if group is not None:
+                counts[group] += n
+        return dict(counts)
+
     def summary_by_intended_action(self) -> Dict[str, Dict[str, Any]]:
-        """Well-form rate theo Ý ĐỊNH (intended_action_type, có ngay cả khi
-        parse fail) — tách 'model chọn action X nhiều hơn' khỏi 'action X dễ
-        sinh sai cú pháp hơn nên bị lọc rớt nhiều hơn ở summary() thường."""
         counts: Dict[str, Dict[str, int]] = defaultdict(lambda: {"total": 0, "well_formed": 0})
         for r in self._records:
             if r.intended_action_type is None:
@@ -207,55 +316,37 @@ class StatsCollector:
         for action, stat in sorted(intended.items()):
             print(f"  {action:<12} total={stat['total']:<6} well_formed={stat['well_formed']:<6} rate={stat['well_form_rate']*100:5.1f}%")
 
-        counts = self.action_counts()
-        total = sum(counts.values())
-        buy_sell = counts.get("BUY", 0) + counts.get("SELL", 0)
-        ratio = buy_sell / total if total else 0.0
-        print(f"\n=== Tỉ lệ (BUY+SELL)/tổng action (dùng cho buff) = {ratio*100:.1f}% (n={total}) ===")
-        hold = counts.get("HOLD", 0)
-        hold_ratio = hold / total if total else 0.0
-        print(f"=== Tỉ lệ HOLD = {hold_ratio*100:.1f}% (n={total}) ===")
-        
+        gcounts = self.group_counts()
+        total = sum(gcounts.values())
+        print(f"\n=== Tỉ lệ theo NHÓM (dùng cho EMABuffController, n={total}) ===")
+        for group in GROUPS:
+            n = gcounts.get(group, 0)
+            ratio = n / total if total else 0.0
+            print(f"  {group:<8} count={n:<6} ratio={ratio*100:5.1f}%")
 
     def to_list(self):
         return [asdict(r) for r in self._records]
-        
-    def save(self, path: str, buffs=None, hold=None) -> None:
+
+    def save(self, path: str) -> None:
         p = Path(path); p.parent.mkdir(parents=True, exist_ok=True)
-        payload = {"records": self.to_list()}
-        if buffs is not None:
-            payload["action_buffs"] = buffs.snapshot()
-        if hold is not None:
-            payload["hold_buff"] = hold.get()
-        p.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        p.write_text(json.dumps({"records": self.to_list()}, ensure_ascii=False), encoding="utf-8")
 
     @classmethod
-    def load(cls, path: str):
-        """Trả về (collector, buffs_dict, hold_value). Hỗ trợ NGƯỢC format cũ
-        (bare list, không có action_buffs/hold_buff) — file cũ từ trước khi đổi
-        format vẫn load được, chỉ là buffs_dict rỗng và hold_value=0.0."""
+    def load(cls, path: str) -> "StatsCollector":
+        """Hỗ trợ NGƯỢC cả format cũ (bare list, hoặc dict có thêm
+        "action_buffs"/"hold_buff" — 2 field đó giờ bị BỎ QUA, không dùng
+        nữa)."""
         collector = cls()
         p = Path(path)
-        buffs_dict: Dict[str, float] = {}
-        hold_value: float = 0.0
         if p.exists():
             data = json.loads(p.read_text(encoding="utf-8"))
-            if isinstance(data, list):          # format cũ — bare list record
-                records = data
-            else:                                # format mới — {"records":..., "action_buffs":..., "hold_buff":...}
-                records = data.get("records", [])
-                buffs_dict = data.get("action_buffs", {})
-                hold_value = data.get("hold_buff", 0.0)
+            records = data if isinstance(data, list) else data.get("records", [])
             for d in records:
                 collector.log(RolloutRecord(**d))
+        return collector
 
-        return collector, buffs_dict, hold_value
-    
     @classmethod
     def merge_from_files(cls, paths) -> "StatsCollector":
-        """report_only giờ chỉ gộp được records của CHU KỲ CUỐI mỗi rank (vì
-        file bị reset mỗi save_steps) — không còn full-round history, đây là
-        đánh đổi chủ ý để tránh file phình to qua hàng nghìn step."""
         collector = cls()
         for path in paths:
             p = Path(path)
@@ -269,53 +360,11 @@ class StatsCollector:
 
 stats_collector = StatsCollector()
 
-RATIO_TOLERANCE = 1e-9
-
-
-def update_buffs_from_stats(
-    stats: StatsCollector,
-    round_config: RoundConfig,
-    buffs: Optional[ActionBuffTable] = None,
-    hold: Optional[HoldBuff] = None,
-) -> None:
-    buffs = buffs if buffs is not None else action_buffs
-    hold = hold if hold is not None else hold_buff
-    counts = stats.action_counts()
-    total = sum(counts.values())
-    if total == 0:
-        return
-
-    # --- BUY/SELL buff (giữ nguyên logic cũ) ---
-    actual_ratio = (counts.get("BUY", 0) + counts.get("SELL", 0)) / total
-    target_ratio = round_config.target_action_ratio
-    if actual_ratio < target_ratio - RATIO_TOLERANCE:
-        delta = round_config.buff_step
-    elif actual_ratio > target_ratio + RATIO_TOLERANCE:
-        delta = -round_config.buff_step
-    else:
-        delta = 0.0
-    for action_type in OUTCOME_ACTIONS:
-        new_buff = min(round_config.buff_max, max(round_config.buff_min, buffs.get(action_type) + delta))
-        buffs.set(action_type, new_buff)
-
-    # --- HOLD buff — mẫu số = TOÀN BỘ action (mọi trend), độc lập BUY/SELL ---
-    actual_hold_ratio = counts.get("HOLD", 0) / total
-    target_hold_ratio = round_config.target_hold_ratio
-    if actual_hold_ratio < target_hold_ratio - RATIO_TOLERANCE:
-        hold_delta = round_config.hold_buff_step
-    elif actual_hold_ratio > target_hold_ratio + RATIO_TOLERANCE:
-        hold_delta = -round_config.hold_buff_step
-    else:
-        hold_delta = 0.0
-    new_hold = min(round_config.hold_buff_max, max(round_config.hold_buff_min, hold.get() + hold_delta))
-    hold.set(new_hold)
-
 
 # =====================================================================
 # Nhánh 1 — zone quality. Áp dụng cho MỌI action có think.zone (BUY, SELL,
 # CANCEL_BUY, CANCEL_SELL, WAIT_BUY, WAIT_SELL) — HOLD (RANGE không zone)
-# luôn nhận 0.0. Liên tục theo r_multiple của probe_zone_quality (không còn
-# nhị phân bonus/penalty cố định như bản cũ).
+# luôn nhận 0.0.
 # =====================================================================
 def compute_zone_score(
     think: ThinkNode,
@@ -331,25 +380,22 @@ def compute_zone_score(
 
 
 # =====================================================================
-# Nhánh 2 — outcome. CHỈ BUY/SELL (action.action_type in OUTCOME_ACTIONS).
-# CANCEL_BUY/CANCEL_SELL/WAIT_BUY/WAIT_SELL/HOLD -> 0.0 KỂ CẢ khi
-# forward_result có giá trị (CANCEL vẫn có counterfactual outcome từ
-# evaluate_outcome(), nhưng theo quyết định đã chốt, CANCEL không đóng góp
-# vào outcome_score nữa).
+# Nhánh 2 — outcome. CHỈ BUY/SELL. buffs.get_buff("BUY"/"SELL") -> cùng trả
+# về buff của nhóm TRADE (xem GROUP_OF_ACTION).
 # =====================================================================
 def compute_outcome_score(
     action: ActionNode,
     think: ThinkNode,
     forward_result,
     round_config: RoundConfig,
-    buffs: ActionBuffTable,
+    buffs: EMABuffController,
 ) -> float:
     if action.action_type not in OUTCOME_ACTIONS:
         return 0.0
     if forward_result is None:
         return 0.0
 
-    buff = buffs.get(action.action_type)
+    buff = buffs.get_buff(action.action_type)
 
     risk_bins = abs(think.current_price_bin - action.sl) if action.sl is not None else 0.0
     fee_in_r = round_config.trade_fee_bins / risk_bins if risk_bins > 0 else 0.0
@@ -362,18 +408,15 @@ def score_completion(
     completion: str,
     future_bins: Sequence[Sequence[int]],
     stats: Optional[StatsCollector] = None,
-    buffs: Optional[ActionBuffTable] = None,
+    buffs: Optional[EMABuffController] = None,
 ) -> float:
-    buffs = buffs if buffs is not None else action_buffs
+    buffs = buffs if buffs is not None else buff_controller
     round_config = get_active_round_config()
     future_candles: List[FutureCandle] = [tuple(c) for c in future_bins]
     intended_action = _extract_intended_action(completion)
 
     parse_result = Parser.from_text(prompt + " " + completion).parse()
 
-    # ------------------------------------------------------------
-    # Bước 1: gate well-formed — fail thì GIỮ NGUYÊN well_form_score, return ngay.
-    # ------------------------------------------------------------
     if not parse_result.is_well_formed():
         if stats is not None:
             program = parse_result.ast
@@ -402,8 +445,6 @@ def score_completion(
     )
     overall_semantic_passed = semantic_result.passed and extra_valid
 
-    # sl_valid là 1 phần của semantic score — áp dụng KHÔNG điều kiện (bất kể phần
-    # semantic còn lại pass hay fail), CHỈ có ý nghĩa khi action_type là BUY/SELL.
     sem_score = semantic_result.score
     if semantic_result.passed and not extra_valid:
         sem_score = max(0.0, sem_score - EXTRA_SEMANTIC_PENALTY)
@@ -413,9 +454,6 @@ def score_completion(
         sem_score -= round_config.sl_valid_penalty
     sem_score = max(0.0, sem_score)
 
-    # ------------------------------------------------------------
-    # Bước 1 (tiếp): gate semantic — fail thì GIỮ NGUYÊN R_WF_FULL + sem_score, return.
-    # ------------------------------------------------------------
     if not overall_semantic_passed:
         if stats is not None:
             stats.log(RolloutRecord(
@@ -425,20 +463,22 @@ def score_completion(
             ))
         return R_WF_FULL + sem_score
 
-    # ==============================================================
-    # Bước 1 PASS cả 2 gate — K đồng đều (mọi mẫu tới đây coi như nhau ở mức
-    # sàn), rồi cộng 2 nhánh SONG SONG (bước 2):
-    #   - zone_score:    mọi action có zone (BUY/SELL/CANCEL_*/WAIT_*)
-    #   - outcome_score: CHỈ BUY/SELL
-    # Bước 3: reward = K + zone_score + outcome_score
-    # ==============================================================
     K = round_config.pass_gate2_bonus
     zone_score = compute_zone_score(think, future_candles, round_config)
     outcome_score = compute_outcome_score(action, think, forward_result, round_config, buffs)
     reward = K + zone_score + outcome_score
+
     if action_type == "HOLD":
-        reward += hold_buff.get()
-        
+        reward += buffs.get_buff("HOLD")
+    elif action_type in ("CANCEL_BUY", "CANCEL_SELL"):
+        reward += buffs.get_buff(action_type)
+    elif action_type in ("WAIT_BUY", "WAIT_SELL"):
+        reward += buffs.get_buff(action_type)
+
+    # record() gọi trên CHÍNH object `buffs` đang dùng (không hardcode global)
+    # — quan trọng để unit test truyền buffs riêng không đụng global thật.
+    buffs.record(action_type)
+
     if stats is not None:
         stats.log(RolloutRecord(
             trend=trend, action_type=action_type, intended_action_type=intended_action,
@@ -456,6 +496,6 @@ def unified_reward_func(
     **kwargs: Any,
 ) -> List[float]:
     return [
-        score_completion(prompt, completion, fb, stats=stats_collector, buffs=action_buffs)
+        score_completion(prompt, completion, fb, stats=stats_collector, buffs=buff_controller)
         for prompt, completion, fb in zip(prompts, completions, future_bins)
     ]
