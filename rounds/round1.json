@@ -1,7 +1,7 @@
 {
-  "round_id": "round1",
+  "round_id": "round2",
   "zone_width_min_bins": 5,
-  "zone_width_max_bins": 50,
+  "zone_width_max_bins": 20,
   "sl_min_dist_bins": 5,
   "sl_max_dist_bins": 50,
   "pass_gate2_bonus": 4.5,
