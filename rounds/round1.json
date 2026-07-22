@@ -20,8 +20,8 @@
   "buff_step_max": 0.0005,
 
   "trade_buff_min": 0.4,  
-  "trade_buff_max": 0.6,  
-  "trade_buff_init": 0.60,
+  "trade_buff_max": 0.55,  
+  "trade_buff_init": 0.55,
 
   "hold_buff_min": 0.0,   
   "hold_buff_max": 0.09,   

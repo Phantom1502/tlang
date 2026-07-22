@@ -7,5 +7,5 @@ print(df.shape)
 print(df.columns)
 
 from datasets import load_dataset
-ds = load_dataset("parquet", data_files="data/dataset/XAUUSD_M1_Val_grpo_dataset.parquet")
-print(ds)
+ds = load_dataset("parquet", data_files="data/dataset/XAUUSD_M1_Val_grpo_dataset.parquet", split="train")
+print(ds[6]['prompt'])
