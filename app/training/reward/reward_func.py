@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -260,6 +260,8 @@ class RolloutRecord:
     well_formed: bool
     semantic_passed: bool
     sl_valid: Optional[bool] = None
+    rr: Optional[int] = None   # THÊM — action.rr thật (chỉ có ở BUY/SELL), để theo dõi phân phối RR
+                                 # trực tiếp thay vì ước lượng ngược qua avg_R/win_rate.
 
 
 class StatsCollector:
@@ -280,7 +282,7 @@ class StatsCollector:
 
     def summary(self):
         by_trend_total = defaultdict(int)
-        raw = defaultdict(lambda: defaultdict(lambda: {"count": 0, "r_multiples": []}))
+        raw = defaultdict(lambda: defaultdict(lambda: {"count": 0, "r_multiples": [], "rrs": []}))
         for r in self._records:
             if r.trend is None or r.action_type is None:
                 continue
@@ -291,17 +293,22 @@ class StatsCollector:
             entry["count"] += 1
             if r.r_multiple is not None:
                 entry["r_multiples"].append(r.r_multiple)
+            if r.rr is not None:
+                entry["rrs"].append(r.rr)
         result = {}
         for trend, actions in raw.items():
             result[trend] = {}
             total = by_trend_total[trend]
             for action_type, entry in actions.items():
                 rms = entry["r_multiples"]
+                rrs = entry["rrs"]
                 avg_r = sum(rms) / len(rms) if rms else None
                 win_rate = (sum(1 for x in rms if x > 0) / len(rms)) if rms else None
+                avg_rr = sum(rrs) / len(rrs) if rrs else None
                 result[trend][action_type] = {
                     "count": entry["count"], "freq_within_trend": entry["count"] / total if total else 0.0,
                     "avg_r_multiple": avg_r, "win_rate": win_rate,
+                    "avg_rr": avg_rr, "rr_distribution": dict(sorted(Counter(rrs).items())) if rrs else None,
                 }
         return result
 
@@ -349,7 +356,13 @@ class StatsCollector:
             for action_type, stat in actions.items():
                 avg_r = f"{stat['avg_r_multiple']:.2f}" if stat["avg_r_multiple"] is not None else "-"
                 win_rate = f"{stat['win_rate'] * 100:.0f}%" if stat["win_rate"] is not None else "-"
-                print(f"  {action_type:<12} count={stat['count']:<4} freq={stat['freq_within_trend']*100:5.1f}%  avg_R={avg_r:>6}  win_rate={win_rate}")
+                avg_rr = f"{stat['avg_rr']:.2f}" if stat.get("avg_rr") is not None else "-"
+                line = f"  {action_type:<12} count={stat['count']:<4} freq={stat['freq_within_trend']*100:5.1f}%  avg_R={avg_r:>6}  win_rate={win_rate}  avg_RR={avg_rr:>5}"
+                dist = stat.get("rr_distribution")
+                if dist:
+                    dist_str = " ".join(f"{k}:{v}" for k, v in dist.items())
+                    line += f"  rr_dist=[{dist_str}]"
+                print(line)
 
         print("\n=== Well-form rate theo Ý ĐỊNH (intended_action_type — kể cả parse fail) ===")
         intended = self.summary_by_intended_action()
@@ -525,6 +538,7 @@ def score_completion(
             outcome_status=forward_result.status.value if forward_result else None,
             r_multiple=forward_result.r_multiple if forward_result else None,
             well_formed=True, semantic_passed=True, sl_valid=sl_valid,
+            rr=action.rr if action_type in OUTCOME_ACTIONS else None,
         ))
     return reward
 
