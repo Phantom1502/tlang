@@ -11,7 +11,7 @@
   "trade_fee_bins": 0.65,
 
   "target_hold_ratio": 0.14,
-  "target_trade_ratio": 0.28,
+  "target_trade_ratio": 0.36,
   "target_cancel_ratio": 0.23,
 
   "ema_alpha": 0.9,
