@@ -55,17 +55,37 @@ def _extract_intended_action(completion: str) -> Optional[str]:
 #   1. record(action_type): gọi trong score_completion() cho MỖI sample
 #      well_formed + semantic_passed — đúng logic action_counts() cũ.
 #   2. on_step_end(round_config): gọi 1 LẦN / optimizer step (KHÔNG phải
-#      mỗi save_steps) — với MỖI nhóm:
+#      mỗi save_steps) — với MỖI nhóm, dùng bộ điều khiển PD (Proportional +
+#      Derivative, KHÔNG có thành phần I):
 #         rate_this_step = count_nhóm_trong_step / tổng_count_trong_step
 #         ema_ratio = (1-alpha)*rate_this_step + alpha*ema_ratio_cũ
-#         delta = clip(kp * (target - ema_ratio), -step_max, +step_max)
+#         error      = target - ema_ratio
+#         d_error    = error - prev_error          # THÊM — tốc độ error đang co/giãn
+#         delta = clip(kp*error + kd*d_error, -step_max, +step_max)
 #         buff = clip(buff + delta, group_min, group_max)
+#         prev_error = error                        # lưu lại cho step sau
 #
-# State (ema_ratio + buff, MỌI nhóm) PHẢI persist vào reward_state.json BÊN
-# TRONG thư mục checkpoint (không phải ở output_dir rời như StatsCollector
-# trước đây) — xem save()/load() và cách gọi ở train_grpo.py. Đây là state
-# DUY NHẤT cần sống sót qua resume; StatsCollector giờ CHỈ còn vai trò
-# report (xem docstring StatsCollector bên dưới).
+#      Ý NGHĨA D-TERM (buff_kd): P-only (buff_kd=0, hành vi cũ) chỉ phản ứng
+#      theo ĐỘ LỆCH hiện tại — khi ratio đang lao nhanh về phía target, nó vẫn
+#      tiếp tục đẩy buff cùng chiều tới tận khi VƯỢT QUA target mới bắt đầu
+#      kéo ngược lại (overshoot, dao động không tắt dần — quan sát thấy rõ ở
+#      HOLD trong log thực tế). D-term "phanh sớm": khi error đang co lại
+#      nhanh (d_error âm lớn — ratio đang tiến rất nhanh về target), nó chủ
+#      động trừ bớt delta NGAY TỪ TRƯỚC khi ratio kịp vượt target, giảm biên
+#      độ overshoot mà không cần hạ buff_kp/trần (đổi lại: nhạy nhiễu hơn P
+#      thuần — vì d_error tính trên ema_ratio đã làm mượt qua EMA nên đỡ giật
+#      hơn nhiều so với lấy đạo hàm trên raw rate_this_step trực tiếp).
+#
+# State (ema_ratio + buff + prev_error, MỌI nhóm) PHẢI persist vào
+# reward_state.json BÊN TRONG thư mục checkpoint (không phải ở output_dir
+# rời như StatsCollector trước đây) — xem save()/load() và cách gọi ở
+# train_grpo.py. Đây là state DUY NHẤT cần sống sót qua resume; StatsCollector
+# giờ CHỈ còn vai trò report (xem docstring StatsCollector bên dưới).
+#
+# TƯƠNG THÍCH NGƯỢC: reward_state.json cũ (trước khi thêm D-term) không có
+# "prev_error" — load_state_dict() dùng .get("prev_error", 0.0) nên load vẫn
+# chạy được bình thường, chỉ là D-term coi như "khởi động lại từ 0" ở step
+# đầu tiên sau resume (KHÔNG crash, KHÔNG mất buff/ema_ratio đã có).
 # =====================================================================
 GROUPS = ("HOLD", "TRADE", "CANCEL", "WAIT")
 
@@ -108,6 +128,7 @@ def _group_init(group: str, rc: RoundConfig) -> float:
 class GroupBuffState:
     ema_ratio: float
     buff: float
+    prev_error: float = 0.0   # THÊM — error (target - ema_ratio) của lần update trước, dùng cho D-term
 
 
 class EMABuffController:
@@ -120,11 +141,14 @@ class EMABuffController:
         """Dùng khi round MỚI bắt đầu (không có state cũ để resume) — seed
         ema_ratio = target (giả định 'đã ở điểm cân bằng' lúc khởi động, tránh
         vài trăm step đầu buff phản ứng nhầm hướng do ema=0), buff = group_init
-        (dò bằng thực nghiệm trước khi train thật)."""
+        (dò bằng thực nghiệm trước khi train thật), prev_error = 0.0 (chưa có
+        error nào trước đó — D-term coi như "phẳng" ở step đầu tiên, đúng
+        hành vi mong đợi khi seed lần đầu)."""
         for group in GROUPS:
             self.states[group] = GroupBuffState(
                 ema_ratio=_group_target(group, round_config),
                 buff=_group_init(group, round_config),
+                prev_error=0.0,
             )
         self._counts.clear()
         self._total = 0
@@ -139,7 +163,9 @@ class EMABuffController:
     def on_step_end(self, round_config: RoundConfig) -> None:
         """Gọi 1 lần / optimizer step (TrainerCallback.on_step_end). Nếu step
         này KHÔNG có sample nào well_formed+semantic_passed (total=0) thì bỏ
-        qua — giữ nguyên ema/buff cũ, tránh update dựa trên rate=0/0 vô nghĩa."""
+        qua — giữ nguyên ema/buff/prev_error cũ, tránh update dựa trên rate=0/0
+        vô nghĩa (và tránh d_error bị tính sai do "khoảng trống" không phản
+        ánh biến động thật)."""
         if self._total == 0:
             return
         for group in GROUPS:
@@ -147,7 +173,12 @@ class EMABuffController:
             st = self.states[group]
             st.ema_ratio = (1.0 - round_config.ema_alpha) * rate_this_step + round_config.ema_alpha * st.ema_ratio
             lo, hi = _group_range(group, round_config)
-            delta = round_config.buff_kp * (_group_target(group, round_config) - st.ema_ratio)
+
+            error = _group_target(group, round_config) - st.ema_ratio
+            d_error = error - st.prev_error
+            st.prev_error = error
+
+            delta = round_config.buff_kp * error + round_config.buff_kd * d_error
             delta = _clip(delta, -round_config.buff_step_max, round_config.buff_step_max)
             st.buff = _clip(st.buff + delta, lo, hi)
         self._counts.clear()
@@ -160,14 +191,23 @@ class EMABuffController:
         return self.states[group].buff
 
     def snapshot(self) -> Dict[str, Dict[str, float]]:
-        return {g: {"ema_ratio": s.ema_ratio, "buff": s.buff} for g, s in self.states.items()}
+        return {
+            g: {"ema_ratio": s.ema_ratio, "buff": s.buff, "prev_error": s.prev_error}
+            for g, s in self.states.items()
+        }
 
     def state_dict(self) -> Dict[str, Dict[str, float]]:
         return self.snapshot()
 
     def load_state_dict(self, data: Dict[str, Dict[str, float]]) -> None:
         for group, d in data.items():
-            self.states[group] = GroupBuffState(ema_ratio=float(d["ema_ratio"]), buff=float(d["buff"]))
+            self.states[group] = GroupBuffState(
+                ema_ratio=float(d["ema_ratio"]),
+                buff=float(d["buff"]),
+                # .get() — tương thích ngược reward_state.json cũ (trước khi có
+                # D-term) không có field này. Thiếu -> coi như 0.0, KHÔNG crash.
+                prev_error=float(d.get("prev_error", 0.0)),
+            )
 
     def save(self, path: str) -> None:
         p = Path(path)

@@ -20,9 +20,15 @@ _REQUIRED_KEYS = (
     "target_hold_ratio",
     "target_trade_ratio",
     "target_cancel_ratio",
-    # EMA + proportional control — DÙNG CHUNG cho cả 4 nhóm
+    # EMA + PD control — DÙNG CHUNG cho cả 4 nhóm. buff_kd (D-term) THÊM MỚI —
+    # "phanh sớm" chống overshoot: delta = kp*error + kd*(error - prev_error).
+    # buff_kd=0 tương đương P-only (hành vi cũ), nên nâng cấp này an toàn
+    # ngược (backward-safe) về mặt CÔNG THỨC — nhưng field vẫn BẮT BUỘC khai
+    # báo tường minh trong JSON (không có default ngầm) để tránh quên set
+    # nhầm mà không biết, đúng tinh thần "RoundConfig fail-loud nếu thiếu".
     "ema_alpha",
     "buff_kp",
+    "buff_kd",
     "buff_step_max",
     # range riêng từng nhóm
     "trade_buff_min", "trade_buff_max",
@@ -60,7 +66,8 @@ class RoundConfig:
     # minh, 1 nhóm tự bù).
 
     ema_alpha: float              # ema_new = (1-alpha)*rate_step + alpha*ema_old
-    buff_kp: float                # delta = kp * (target - ema_ratio)
+    buff_kp: float                # delta = kp * error, error = target - ema_ratio
+    buff_kd: float                # delta += kd * (error - prev_error) — "phanh sớm", chống overshoot
     buff_step_max: float          # trần |delta| mỗi lần update (1 lần / optimizer step)
 
     trade_buff_min: float
@@ -114,6 +121,8 @@ class RoundConfig:
             raise ValueError(f"ema_alpha phải nằm trong [0,1), nhận {self.ema_alpha}.")
         if self.buff_kp < 0:
             raise ValueError(f"buff_kp phải >= 0, nhận {self.buff_kp}.")
+        if self.buff_kd < 0:
+            raise ValueError(f"buff_kd phải >= 0, nhận {self.buff_kd}.")
         if self.buff_step_max < 0:
             raise ValueError(f"buff_step_max phải >= 0, nhận {self.buff_step_max}.")
         if self.zone_score_scale < 0:
@@ -136,6 +145,11 @@ class RoundConfig:
         # đều có zone; HOLD thì KHÔNG — RANGE không zone).
         # worst_outcome_score CHỈ áp dụng cho TRADE (BUY/SELL là action duy
         # nhất có outcome_score, xem compute_outcome_score).
+        #
+        # LƯU Ý: bất biến này chỉ xét buff_MIN của từng nhóm (worst-case buff),
+        # KHÔNG phụ thuộc buff_kp/buff_kd — vì buff luôn bị clip trong
+        # [group_min, group_max] bất kể công thức PD tính delta thế nào, nên
+        # thêm D-term KHÔNG ảnh hưởng gì tới bất biến này, không cần sửa.
         # ==============================================================
         fee_worst = self.trade_fee_bins / self.sl_min_dist_bins
         worst_zone_score = -1.0 * self.zone_score_scale
@@ -183,6 +197,7 @@ class RoundConfig:
             target_cancel_ratio=float(data["target_cancel_ratio"]),
             ema_alpha=float(data["ema_alpha"]),
             buff_kp=float(data["buff_kp"]),
+            buff_kd=float(data["buff_kd"]),
             buff_step_max=float(data["buff_step_max"]),
             trade_buff_min=float(data["trade_buff_min"]),
             trade_buff_max=float(data["trade_buff_max"]),
