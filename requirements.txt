@@ -12,3 +12,4 @@ pyarrow>=14.0          # engine đọc/ghi .parquet (ưu tiên dùng nếu có)
 fastparquet>=2024.5.0  # engine parquet dự phòng; từ 2023.x dùng calendar versioning
 
 pdfplumber
+matplotlib
