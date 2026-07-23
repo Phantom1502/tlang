@@ -3,7 +3,7 @@
   "zone_width_min_bins": 5,
   "zone_width_max_bins": 20,
   "sl_min_dist_bins": 5,
-  "sl_max_dist_bins": 40,
+  "sl_max_dist_bins": 50,
   "pass_gate2_bonus": 4.5,
   "zone_score_scale": 0.0,
   "sl_valid_bonus": 0.2,
@@ -19,9 +19,9 @@
   "buff_kd": 0.01,
   "buff_step_max": 0.0005,
 
-  "trade_buff_min": 0.2,  
-  "trade_buff_max": 0.3,  
-  "trade_buff_init": 0.3,
+  "trade_buff_min": 0.15,  
+  "trade_buff_max": 0.25,  
+  "trade_buff_init": 0.15,
 
   "hold_buff_min": 0.0,   
   "hold_buff_max": 0.10,   
