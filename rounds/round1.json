@@ -3,7 +3,7 @@
   "zone_width_min_bins": 5,
   "zone_width_max_bins": 20,
   "sl_min_dist_bins": 5,
-  "sl_max_dist_bins": 50,
+  "sl_max_dist_bins": 40,
   "pass_gate2_bonus": 4.5,
   "zone_score_scale": 0.0,
   "sl_valid_bonus": 0.2,
