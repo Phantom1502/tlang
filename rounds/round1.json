@@ -19,19 +19,19 @@
   "buff_kd": 0.01,
   "buff_step_max": 0.0005,
 
-  "trade_buff_min": 0.45,  
-  "trade_buff_max": 0.55,  
-  "trade_buff_init": 0.55,
+  "trade_buff_min": 0.40,  
+  "trade_buff_max": 0.50,  
+  "trade_buff_init": 0.50,
 
   "hold_buff_min": 0.0,   
-  "hold_buff_max": 0.09,   
+  "hold_buff_max": 0.10,   
   "hold_buff_init": 0.00,
 
-  "cancel_buff_min": 0.0, 
-  "cancel_buff_max": 0.1, 
-  "cancel_buff_init": 0.00,
+  "cancel_buff_min": 0.05, 
+  "cancel_buff_max": 0.15, 
+  "cancel_buff_init": 0.05,
   
-  "wait_buff_min": 0.0,   
-  "wait_buff_max": 0.1,   
-  "wait_buff_init": 0.00
+  "wait_buff_min": 0.05,   
+  "wait_buff_max": 0.15,   
+  "wait_buff_init": 0.05
 }
