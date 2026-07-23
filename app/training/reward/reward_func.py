@@ -453,6 +453,9 @@ def compute_outcome_score(
     risk_bins = abs(think.current_price_bin - action.sl) if action.sl is not None else 0.0
     fee_in_r = round_config.trade_fee_bins / risk_bins if risk_bins > 0 else 0.0
 
+    #TODO: temp rebalance
+    if action.action_type == "SELL":
+        return forward_result.r_multiple - fee_in_r
     return forward_result.r_multiple - fee_in_r + buff
 
 
