@@ -29,9 +29,8 @@ python -m app.training.train_grpo \
     --per_device_train_batch_size 128 \
     --gradient_accumulation_steps 4 \
     --learning_rate 1e-6 \
-    --warmup_ratio 0.0 \
+    --warmup_ratio 0.02 \
     --max_steps 50000 \
-    --num_train_epochs 1 \
     --logging_steps 10 \
     --max_completion_length 40 \
     \
@@ -41,7 +40,7 @@ python -m app.training.train_grpo \
     \
     --num_generations 16 \
     \
-    --save_steps 50 \
+    --save_steps 100 \
     --save_total_limit 2 \
     --hf_token "$HF_TOKEN" \
     \
