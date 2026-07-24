@@ -87,13 +87,16 @@ def _extract_intended_action(completion: str) -> Optional[str]:
 # chạy được bình thường, chỉ là D-term coi như "khởi động lại từ 0" ở step
 # đầu tiên sau resume (KHÔNG crash, KHÔNG mất buff/ema_ratio đã có).
 # =====================================================================
-GROUPS = ("HOLD", "TRADE", "CANCEL", "WAIT")
+GROUPS = ("HOLD", "BUY", "SELL", "CANCEL", "WAIT")
 
 GROUP_OF_ACTION: Dict[str, str] = {
     "HOLD": "HOLD",
-    "BUY": "TRADE", "SELL": "TRADE",
-    "CANCEL_BUY": "CANCEL", "CANCEL_SELL": "CANCEL",
-    "WAIT_BUY": "WAIT", "WAIT_SELL": "WAIT",
+    "BUY": "BUY", 
+    "SELL": "SELL",
+    "CANCEL_BUY": "CANCEL", 
+    "CANCEL_SELL": "CANCEL",
+    "WAIT_BUY": "WAIT", 
+    "WAIT_SELL": "WAIT",
 }
 
 
@@ -328,7 +331,7 @@ class StatsCollector:
         return dict(counts)
 
     def group_counts(self) -> Dict[str, int]:
-        """Đếm theo 4 nhóm (HOLD/TRADE/CANCEL/WAIT) — khớp đúng cách
+        """Đếm theo 5 nhóm (HOLD/BUY/SELL/CANCEL/WAIT) — khớp đúng cách
         EMABuffController.record() đang đếm, tiện đối chiếu khi debug."""
         counts: Dict[str, int] = defaultdict(int)
         for action_type, n in self.action_counts().items():
