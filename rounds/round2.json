@@ -2,7 +2,7 @@
   "round_id": "round2",
   "zone_width_min_bins": 5,
   "zone_width_max_bins": 20,
-  "sl_min_dist_bins": 5,
+  "sl_min_dist_bins": 10,
   "sl_max_dist_bins": 45,
   "pass_gate2_bonus": 4.5,
   "zone_score_scale": 0.0,
