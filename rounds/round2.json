@@ -23,9 +23,9 @@
   "trade_buff_max": 0.25,  
   "trade_buff_init": 0.25,
 
-  "hold_buff_min": 0.0,   
-  "hold_buff_max": 0.10,   
-  "hold_buff_init": 0.10,
+  "hold_buff_min": 0.00,   
+  "hold_buff_max": 0.00,   
+  "hold_buff_init": 0.00,
 
   "cancel_buff_min": 0.00, 
   "cancel_buff_max": 0.05, 
