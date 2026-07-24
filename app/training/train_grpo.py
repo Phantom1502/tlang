@@ -391,6 +391,9 @@ def main() -> None:
             # EMA + proportional update — 1 LẦN / optimizer step, KHÔNG phụ
             # thuộc save_steps (decouple hẳn khỏi checkpoint cadence).
             buff_controller.on_step_end(round_config)
+            
+        def on_log(self, args, state, control, **kwargs):
+            print(f"buff_controller hiện tại: {buff_controller.snapshot()}\n")
 
         def on_save(self, args, state, control, **kwargs):
             n_records = len(stats_collector._records)
