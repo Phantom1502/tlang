@@ -103,8 +103,11 @@ def _clip(x: float, lo: float, hi: float) -> float:
 
 def _group_target(group: str, rc: RoundConfig) -> float:
     return {
-        "HOLD": rc.target_hold_ratio, "TRADE": rc.target_trade_ratio,
-        "CANCEL": rc.target_cancel_ratio, "WAIT": rc.target_wait_ratio,
+        "HOLD": rc.target_hold_ratio, 
+        "BUY": rc.target_buy_ratio, 
+        "SELL": rc.target_sell_ratio,
+        "CANCEL": rc.target_cancel_ratio, 
+        "WAIT": rc.target_wait_ratio,
     }[group]
 
 

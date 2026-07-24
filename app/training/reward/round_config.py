@@ -118,10 +118,10 @@ class RoundConfig:
                     f"= [{lo},{hi}]."
                 )
 
-        group_sum = self.target_hold_ratio + self.target_trade_ratio + self.target_cancel_ratio
+        group_sum = self.target_hold_ratio + self.target_buy_ratio + self.target_sell_ratio + self.target_cancel_ratio
         if not (0.0 <= group_sum <= 1.0):
             raise ValueError(
-                f"target_hold_ratio + target_trade_ratio + target_cancel_ratio = {group_sum:.4f}, "
+                f"target_hold_ratio + target_buy_ratio + target_sell_ratio + target_cancel_ratio = {group_sum:.4f}, "
                 f"phải nằm trong [0,1] (phần còn lại tự suy ra cho WAIT)."
             )
         self.target_wait_ratio = 1.0 - group_sum   # attribute suy ra, KHÔNG phải dataclass field
@@ -203,7 +203,8 @@ class RoundConfig:
             sl_valid_penalty=float(data["sl_valid_penalty"]),
             trade_fee_bins=float(data["trade_fee_bins"]),
             target_hold_ratio=float(data["target_hold_ratio"]),
-            target_trade_ratio=float(data["target_trade_ratio"]),
+            target_buy_ratio=float(data["target_buy_ratio"]),
+            target_sell_ratio=float(data["target_sell_ratio"]),
             target_cancel_ratio=float(data["target_cancel_ratio"]),
             ema_alpha=float(data["ema_alpha"]),
             buff_kp=float(data["buff_kp"]),
