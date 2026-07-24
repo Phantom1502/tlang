@@ -27,11 +27,11 @@
   "hold_buff_max": 0.10,   
   "hold_buff_init": 0.00,
 
-  "cancel_buff_min": 0.05, 
-  "cancel_buff_max": 0.15, 
-  "cancel_buff_init": 0.05,
+  "cancel_buff_min": 0.00, 
+  "cancel_buff_max": 0.05, 
+  "cancel_buff_init": 0.00,
   
-  "wait_buff_min": 0.05,   
-  "wait_buff_max": 0.15,   
-  "wait_buff_init": 0.05
+  "wait_buff_min": 0.00,   
+  "wait_buff_max": 0.05,   
+  "wait_buff_init": 0.00
 }
