@@ -19,7 +19,7 @@ python -m app.training.train_grpo \
     --model_size base \
     --round_id round2 \
     --repo_id "sullivan1502/base-grpo-round2" \
-    --init_from_repo "sullivan1502/base-sft" \
+    --init_from_repo "sullivan1502/base-grpo-round1" \
     --round_config "./rounds/round2.json" \
     \
     --dataset_name "sullivan1502/tlang-grpo" \
@@ -30,10 +30,10 @@ python -m app.training.train_grpo \
     --gradient_accumulation_steps 4 \
     --learning_rate 1e-6 \
     --warmup_ratio 0.0 \
-    --max_steps 6000 \
+    --max_steps 50000 \
     --num_train_epochs 1 \
     --logging_steps 10 \
-    --max_completion_length 128 \
+    --max_completion_length 40 \
     \
     --temperature 1.1 \
     --top_p 1.0 \
