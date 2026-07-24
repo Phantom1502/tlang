@@ -28,12 +28,11 @@ python -m app.training.train_grpo \
     --output_dir "./output/base_grpo_round1" \
     --per_device_train_batch_size 128 \
     --gradient_accumulation_steps 4 \
-    --learning_rate 1e-6 \
-    --warmup_ratio 0.0 \
-    --max_steps 6000 \
-    --num_train_epochs 1 \
+    --learning_rate 3e-6 \
+    --warmup_ratio 0.01 \
+    --max_steps 50000 \
     --logging_steps 10 \
-    --max_completion_length 128 \
+    --max_completion_length 40 \
     \
     --temperature 1.1 \
     --top_p 1.0 \
