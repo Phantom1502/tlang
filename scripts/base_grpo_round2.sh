@@ -28,7 +28,7 @@ python -m app.training.train_grpo \
     --output_dir "./output/base_grpo_round2" \
     --per_device_train_batch_size 128 \
     --gradient_accumulation_steps 4 \
-    --learning_rate 1e-6 \
+    --learning_rate 3e-6 \
     --warmup_ratio 0.02 \
     --max_steps 50000 \
     --logging_steps 10 \
