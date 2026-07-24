@@ -18,7 +18,8 @@ _REQUIRED_KEYS = (
     "trade_fee_bins",
     # 3 nhóm target tường minh — WAIT tự bù = 1 - tổng 3 nhóm này (mục 3, chốt lượt trước)
     "target_hold_ratio",
-    "target_trade_ratio",
+    "target_buy_ratio",
+    "target_sell_ratio",
     "target_cancel_ratio",
     # EMA + PD control — DÙNG CHUNG cho cả 4 nhóm. buff_kd (D-term) THÊM MỚI —
     # "phanh sớm" chống overshoot: delta = kp*error + kd*(error - prev_error).
@@ -31,7 +32,8 @@ _REQUIRED_KEYS = (
     "buff_kd",
     "buff_step_max",
     # range riêng từng nhóm
-    "trade_buff_min", "trade_buff_max",
+    "buy_buff_min", "buy_buff_max",
+    "sell_buff_min", "sell_buff_max",
     "hold_buff_min", "hold_buff_max",
     "cancel_buff_min", "cancel_buff_max",
     "wait_buff_min", "wait_buff_max",
@@ -59,7 +61,8 @@ class RoundConfig:
     trade_fee_bins: float
 
     target_hold_ratio: float
-    target_trade_ratio: float     # BUY+SELL gộp chung 1 nhóm
+    target_buy_ratio: float
+    target_sell_ratio: float
     target_cancel_ratio: float
     # target_wait_ratio KHÔNG khai báo field — suy ra trong __post_init__,
     # KHÔNG đọc/ghi trực tiếp từ JSON (đây là chốt thiết kế: 3 nhóm tường
@@ -70,8 +73,10 @@ class RoundConfig:
     buff_kd: float                # delta += kd * (error - prev_error) — "phanh sớm", chống overshoot
     buff_step_max: float          # trần |delta| mỗi lần update (1 lần / optimizer step)
 
-    trade_buff_min: float
-    trade_buff_max: float
+    buy_buff_min: float
+    buy_buff_max: float
+    sell_buff_min: float
+    sell_buff_max: float
     hold_buff_min: float
     hold_buff_max: float
     cancel_buff_min: float
@@ -80,14 +85,17 @@ class RoundConfig:
     wait_buff_max: float
 
     # init=None -> mặc định = min (giữ hành vi cũ của buff_init trước đây)
-    trade_buff_init: Optional[float] = None
+    buy_buff_init: Optional[float] = None
+    sell_buff_init: Optional[float] = None
     hold_buff_init: Optional[float] = None
     cancel_buff_init: Optional[float] = None
     wait_buff_init: Optional[float] = None
 
     def __post_init__(self) -> None:
-        if self.trade_buff_init is None:
-            self.trade_buff_init = self.trade_buff_min
+        if self.buy_buff_init is None:
+            self.buy_buff_init = self.buy_buff_min
+        if self.sell_buff_init is None:
+            self.sell_buff_init = self.sell_buff_min
         if self.hold_buff_init is None:
             self.hold_buff_init = self.hold_buff_min
         if self.cancel_buff_init is None:
@@ -96,7 +104,8 @@ class RoundConfig:
             self.wait_buff_init = self.wait_buff_min
 
         for name, lo, val, hi in (
-            ("trade", self.trade_buff_min, self.trade_buff_init, self.trade_buff_max),
+            ("buy", self.buy_buff_min, self.buy_buff_init, self.buy_buff_max),
+            ("sell", self.sell_buff_min, self.sell_buff_init, self.sell_buff_max),
             ("hold", self.hold_buff_min, self.hold_buff_init, self.hold_buff_max),
             ("cancel", self.cancel_buff_min, self.cancel_buff_init, self.cancel_buff_max),
             ("wait", self.wait_buff_min, self.wait_buff_init, self.wait_buff_max),
@@ -157,7 +166,8 @@ class RoundConfig:
         gate2_fail_max = _R_WF_FULL + _R_SEM_FULL + self.sl_valid_bonus
 
         worst_by_group = {
-            "TRADE": self.pass_gate2_bonus + worst_zone_score + worst_outcome_score + self.trade_buff_min,
+            "BUY": self.pass_gate2_bonus + worst_zone_score + worst_outcome_score + self.buy_buff_min,
+            "SELL": self.pass_gate2_bonus + worst_zone_score + worst_outcome_score + self.sell_buff_min,
             "HOLD": self.pass_gate2_bonus + self.hold_buff_min,
             "CANCEL": self.pass_gate2_bonus + worst_zone_score + self.cancel_buff_min,
             "WAIT": self.pass_gate2_bonus + worst_zone_score + self.wait_buff_min,
@@ -199,15 +209,18 @@ class RoundConfig:
             buff_kp=float(data["buff_kp"]),
             buff_kd=float(data["buff_kd"]),
             buff_step_max=float(data["buff_step_max"]),
-            trade_buff_min=float(data["trade_buff_min"]),
-            trade_buff_max=float(data["trade_buff_max"]),
+            buy_buff_min=float(data["buy_buff_min"]),
+            buy_buff_max=float(data["buy_buff_max"]),
+            sell_buff_min=float(data["sell_buff_min"]),
+            sell_buff_max=float(data["sell_buff_max"]),
             hold_buff_min=float(data["hold_buff_min"]),
             hold_buff_max=float(data["hold_buff_max"]),
             cancel_buff_min=float(data["cancel_buff_min"]),
             cancel_buff_max=float(data["cancel_buff_max"]),
             wait_buff_min=float(data["wait_buff_min"]),
             wait_buff_max=float(data["wait_buff_max"]),
-            trade_buff_init=data.get("trade_buff_init"),
+            buy_buff_init=data.get("buy_buff_init"),
+            sell_buff_init=data.get("sell_buff_init"),
             hold_buff_init=data.get("hold_buff_init"),
             cancel_buff_init=data.get("cancel_buff_init"),
             wait_buff_init=data.get("wait_buff_init"),

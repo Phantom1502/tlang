@@ -3,7 +3,7 @@
   "zone_width_min_bins": 5,
   "zone_width_max_bins": 20,
   "sl_min_dist_bins": 5,
-  "sl_max_dist_bins": 50,
+  "sl_max_dist_bins": 20,
   "pass_gate2_bonus": 4.5,
   "zone_score_scale": 0.0,
   "sl_valid_bonus": 0.2,
@@ -11,7 +11,8 @@
   "trade_fee_bins": 0.65,
 
   "target_hold_ratio": 0.10,
-  "target_trade_ratio": 0.44,
+  "target_buy_ratio": 0.22,
+  "target_sell_ratio": 0.22,
   "target_cancel_ratio": 0.23,
 
   "ema_alpha": 0.9,
@@ -19,19 +20,23 @@
   "buff_kd": 0.01,
   "buff_step_max": 0.0005,
 
-  "trade_buff_min": 0.10,  
-  "trade_buff_max": 0.20,  
-  "trade_buff_init": 0.15,
+  "buy_buff_min": 0.00,  
+  "buy_buff_max": 0.10,  
+  "buy_buff_init": 0.00,
 
-  "hold_buff_min": 0.0,   
-  "hold_buff_max": 0.10,   
+  "sell_buff_min": 0.00,  
+  "sell_buff_max": 0.10,  
+  "sell_buff_init": 0.00,
+
+  "hold_buff_min": 0.00,   
+  "hold_buff_max": 0.1,   
   "hold_buff_init": 0.00,
 
   "cancel_buff_min": 0.00, 
-  "cancel_buff_max": 0.05, 
+  "cancel_buff_max": 0.1, 
   "cancel_buff_init": 0.00,
   
   "wait_buff_min": 0.00,   
-  "wait_buff_max": 0.05,   
+  "wait_buff_max": 0.1,   
   "wait_buff_init": 0.00
 }

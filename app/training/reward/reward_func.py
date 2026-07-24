@@ -111,7 +111,8 @@ def _group_target(group: str, rc: RoundConfig) -> float:
 def _group_range(group: str, rc: RoundConfig) -> Tuple[float, float]:
     return {
         "HOLD": (rc.hold_buff_min, rc.hold_buff_max),
-        "TRADE": (rc.trade_buff_min, rc.trade_buff_max),
+        "BUY": (rc.buy_buff_min, rc.buy_buff_max),
+        "SELL": (rc.sell_buff_min, rc.sell_buff_max),
         "CANCEL": (rc.cancel_buff_min, rc.cancel_buff_max),
         "WAIT": (rc.wait_buff_min, rc.wait_buff_max),
     }[group]
@@ -119,8 +120,11 @@ def _group_range(group: str, rc: RoundConfig) -> Tuple[float, float]:
 
 def _group_init(group: str, rc: RoundConfig) -> float:
     return {
-        "HOLD": rc.hold_buff_init, "TRADE": rc.trade_buff_init,
-        "CANCEL": rc.cancel_buff_init, "WAIT": rc.wait_buff_init,
+        "HOLD": rc.hold_buff_init, 
+        "BUY": rc.buy_buff_init,
+        "SELL": rc.sell_buff_init,
+        "CANCEL": rc.cancel_buff_init, 
+        "WAIT": rc.wait_buff_init,
     }[group]
 
 

@@ -264,8 +264,9 @@ def main() -> None:
         f"target_hold_ratio={round_config.target_hold_ratio} "
         f"target_trade_ratio={round_config.target_trade_ratio} "
         f"target_cancel_ratio={round_config.target_cancel_ratio} "
-        f"ema_alpha={round_config.ema_alpha} buff_kp={round_config.buff_kp} buff_step_max={round_config.buff_step_max} "
-        f"trade_buff_min={round_config.trade_buff_min} trade_buff_max={round_config.trade_buff_max} "
+        f"ema_alpha={round_config.ema_alpha} buff_kp={round_config.buff_kp} buff_step_max={round_config.buff_step_max} \n"
+        f"buy_buff_min={round_config.buy_buff_min} buy_buff_max={round_config.buy_buff_max} "
+        f"sell_buff_min={round_config.sell_buff_min} sell_buff_max={round_config.sell_buff_max} "
         f"hold_buff_min={round_config.hold_buff_min} hold_buff_max={round_config.hold_buff_max} "
         f"cancel_buff_min={round_config.cancel_buff_min} cancel_buff_max={round_config.cancel_buff_max} "
         f"wait_buff_min={round_config.wait_buff_min} wait_buff_max={round_config.wait_buff_max}"
@@ -393,7 +394,7 @@ def main() -> None:
             buff_controller.on_step_end(round_config)
             
         def on_log(self, args, state, control, **kwargs):
-            print(f"buff_controller hiện tại: {buff_controller.snapshot()}\n")
+            print(f"\nBUFF_CONTROLLER: {buff_controller.snapshot()}\n")
 
         def on_save(self, args, state, control, **kwargs):
             n_records = len(stats_collector._records)
