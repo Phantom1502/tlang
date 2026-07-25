@@ -40,7 +40,7 @@ python -m app.training.train_grpo \
     \
     --num_generations 16 \
     \
-    --save_steps 50 \
+    --save_steps 100 \
     --save_total_limit 2 \
     --hf_token "$HF_TOKEN" \
     \
