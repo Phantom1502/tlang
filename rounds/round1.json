@@ -20,13 +20,13 @@
   "buff_kd": 0.01,
   "buff_step_max": 0.001,
 
-  "buy_buff_min": 0.1,  
-  "buy_buff_max": 0.25,  
-  "buy_buff_init": 0.10,
+  "buy_buff_min": 0.2,  
+  "buy_buff_max": 0.35,  
+  "buy_buff_init": 0.20,
 
-  "sell_buff_min": 0.1,  
-  "sell_buff_max": 0.25,  
-  "sell_buff_init": 0.10,
+  "sell_buff_min": 0.2,  
+  "sell_buff_max": 0.35,  
+  "sell_buff_init": 0.20,
 
   "hold_buff_min": 0.00,   
   "hold_buff_max": 0.05,   
