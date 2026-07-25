@@ -395,7 +395,13 @@ def main() -> None:
             buff_controller.on_step_end(round_config)
             
         def on_log(self, args, state, control, **kwargs):
-            print(f"\nBUFF_CONTROLLER: {buff_controller.snapshot()}\n")
+            snapshot = buff_controller.snapshot()
+            for group, metrics in snapshot.items():
+                print(
+                    f"{group}: ema_ratio={metrics['ema_ratio']:.4f}, "
+                    f"buff={metrics['buff']:.4f}, "
+                    f"prev_error={metrics['prev_error']:.4f}"
+                )
 
         def on_save(self, args, state, control, **kwargs):
             n_records = len(stats_collector._records)
