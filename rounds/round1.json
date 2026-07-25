@@ -20,12 +20,12 @@
   "buff_kd": 0.01,
   "buff_step_max": 0.001,
 
-  "buy_buff_min": 0.04,  
-  "buy_buff_max": 0.15,  
+  "buy_buff_min": 0.1,  
+  "buy_buff_max": 0.25,  
   "buy_buff_init": 0.10,
 
-  "sell_buff_min": 0.04,  
-  "sell_buff_max": 0.15,  
+  "sell_buff_min": 0.1,  
+  "sell_buff_max": 0.25,  
   "sell_buff_init": 0.10,
 
   "hold_buff_min": 0.00,   
@@ -37,7 +37,7 @@
   "cancel_buff_init": 0.00,
   
   "wait_buff_min": 0.00,   
-  "wait_buff_max": 0.05,   
+  "wait_buff_max": 0.1,   
   "wait_buff_init": 0.00,
 
   "rr_entropy_floor": 0.3,
