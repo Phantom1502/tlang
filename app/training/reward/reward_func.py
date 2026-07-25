@@ -172,33 +172,28 @@ class EMABuffController:
         self._total += 1
 
     def on_step_end(self, round_config: RoundConfig) -> None:
-        if self.state is None or not self._readings:
-            self._readings.clear()
+        """Gọi 1 lần / optimizer step (TrainerCallback.on_step_end). Nếu step
+        này KHÔNG có sample nào well_formed+semantic_passed (total=0) thì bỏ
+        qua — giữ nguyên ema/buff/prev_error cũ, tránh update dựa trên rate=0/0
+        vô nghĩa (và tránh d_error bị tính sai do "khoảng trống" không phản
+        ánh biến động thật)."""
+        if self._total == 0:
             return
+        for group in GROUPS:
+            rate_this_step = self._counts.get(group, 0) / self._total
+            st = self.states[group]
+            st.ema_ratio = (1.0 - round_config.ema_alpha) * rate_this_step + round_config.ema_alpha * st.ema_ratio
+            lo, hi = _group_range(group, round_config)
 
-        mean_h = sum(self._readings) / len(self._readings)
-        st = self.state
+            error = _group_target(group, round_config) - st.ema_ratio
+            d_error = error - st.prev_error
+            st.prev_error = error
 
-        st.ema_entropy = (
-            (1.0 - round_config.rr_entropy_ema_alpha) * mean_h
-            + round_config.rr_entropy_ema_alpha * st.ema_entropy
-        )
-
-        error = max(0.0, round_config.rr_entropy_floor - st.ema_entropy)
-        d_error = error - st.prev_error
-        st.prev_error = error
-
-        if error > 0.0:
-            delta = round_config.rr_entropy_kp * error + round_config.rr_entropy_kd * d_error
-            delta = _clip(delta, -round_config.rr_entropy_bonus_step_max, round_config.rr_entropy_bonus_step_max)
-            st.bonus = _clip(st.bonus + delta, 0.0, round_config.rr_entropy_bonus_cap)
-        else:
-            # THÊM — entropy đã ở/trên floor: chủ động kéo bonus về 0 dần,
-            # KHÔNG để nó đóng băng ở giá trị còn sót lại từ lần error>0 gần nhất.
-            decay = min(st.bonus, round_config.rr_entropy_bonus_step_max)
-            st.bonus = max(0.0, st.bonus - decay)
-
-        self._readings.clear()
+            delta = round_config.buff_kp * error + round_config.buff_kd * d_error
+            delta = _clip(delta, -round_config.buff_step_max, round_config.buff_step_max)
+            st.buff = _clip(st.buff + delta, lo, hi)
+        self._counts.clear()
+        self._total = 0
 
     def get_buff(self, action_type: Optional[str]) -> float:
         group = GROUP_OF_ACTION.get(action_type) if action_type else None
@@ -314,9 +309,6 @@ class RREntropyController:
         self._readings.append(h)
 
     def on_step_end(self, round_config: RoundConfig) -> None:
-        """Nếu KHÔNG có reading nào trong step này (không nhóm rollout nào
-        đủ mẫu RR — vd toàn bộ batch là HOLD/WAIT/CANCEL) thì bỏ qua, giữ
-        nguyên state cũ, tránh update dựa trên dữ liệu rỗng."""
         if self.state is None or not self._readings:
             self._readings.clear()
             return
@@ -329,17 +321,19 @@ class RREntropyController:
             + round_config.rr_entropy_ema_alpha * st.ema_entropy
         )
 
-        # Error CHỈ DƯƠNG khi ema_entropy dưới floor — 1 chiều, KHÔNG ép
-        # entropy lên cao hơn floor khi nó đã ổn (khác buff nhóm 2 chiều).
         error = max(0.0, round_config.rr_entropy_floor - st.ema_entropy)
         d_error = error - st.prev_error
         st.prev_error = error
 
-        delta = round_config.rr_entropy_kp * error + round_config.rr_entropy_kd * d_error
-        delta = _clip(delta, -round_config.rr_entropy_bonus_step_max, round_config.rr_entropy_bonus_step_max)
-        # Sàn dưới CỐ ĐỊNH = 0.0 (không có field min riêng — bonus không
-        # bao giờ âm, chỉ có thể "tắt" hẳn về 0 khi entropy đã hồi phục).
-        st.bonus = _clip(st.bonus + delta, 0.0, round_config.rr_entropy_bonus_cap)
+        if error > 0.0:
+            delta = round_config.rr_entropy_kp * error + round_config.rr_entropy_kd * d_error
+            delta = _clip(delta, -round_config.rr_entropy_bonus_step_max, round_config.rr_entropy_bonus_step_max)
+            st.bonus = _clip(st.bonus + delta, 0.0, round_config.rr_entropy_bonus_cap)
+        else:
+            # THÊM — entropy đã ở/trên floor: chủ động kéo bonus về 0 dần,
+            # KHÔNG để nó đóng băng ở giá trị còn sót lại từ lần error>0 gần nhất.
+            decay = min(st.bonus, round_config.rr_entropy_bonus_step_max)
+            st.bonus = max(0.0, st.bonus - decay)
 
         self._readings.clear()
 
