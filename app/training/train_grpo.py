@@ -418,6 +418,7 @@ def main() -> None:
 
         def on_log(self, args, state, control, **kwargs):
             snapshot = buff_controller.snapshot()
+            print("\n=== BUFF CONTROLLER ===\n")
             for group, metrics in snapshot.items():
                 print(
                     f"{group}: ema_ratio={metrics['ema_ratio']:.4f}, "
