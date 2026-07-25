@@ -668,7 +668,7 @@ def _score_completion_full(
         sem_score -= round_config.sl_valid_penalty
     sem_score = max(0.0, sem_score)
 
-    if not overall_semantic_passed:
+    if not overall_semantic_passed or not sl_valid:
         if stats is not None:
             stats.log(RolloutRecord(
                 trend=trend, action_type=action_type, intended_action_type=intended_action,
