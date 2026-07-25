@@ -239,6 +239,143 @@ class EMABuffController:
         except Exception:
             return False
 
+# =====================================================================
+# RREntropyController — MỚI, TÁCH BIỆT hoàn toàn khỏi EMABuffController.
+#
+# Chống "exploration collapse" của RR (BUY/SELL): khi entropy Shannon của
+# phân phối RR TRONG 1 NHÓM ROLLOUT (num_generations completion cùng 1
+# prompt) tụt dưới 1 FLOOR MỘT CHIỀU, bonus tăng dần — mục đích KHÔNG
+# PHẢI ép RR đa dạng mãi mãi, mà chỉ đảm bảo advantage trong nhóm rollout
+# còn CÓ GÌ để so sánh (nếu cả 16 completion cùng prompt đều ra đúng 1 RR,
+# advantage ~0, model không còn cách nào khám phá RR khác dù context có
+# ủng hộ — đây là khác biệt với "reward degenerate" do bug SL/TIMEOUT,
+# xem thảo luận thiết kế).
+#
+# KHÁC EMABuffController:
+#   - 1 chiều (floor), KHÔNG PHẢI target 2 chiều — RR không có "tỉ lệ
+#     đúng" cố định.
+#   - 1 SCALAR TOÀN CỤC duy nhất (không stratify theo trend/action) — áp
+#     dụng đều cho MỌI completion BUY/SELL semantic-pass trong batch.
+#
+# record_entropy(h): gọi 1 lần / NHÓM ROLLOUT (1 prompt, đủ mẫu RR trong
+# batch hiện tại) — tích luỹ, CHƯA update ngay.
+# on_step_end(round_config): gọi 1 lần / optimizer step, CÙNG NHỊP với
+# EMABuffController.on_step_end() — lấy trung bình các reading đã tích
+# luỹ trong step, update EMA + PD.
+# =====================================================================
+MIN_SAMPLES_FOR_RR_ENTROPY = 2   # < 2 mẫu RR trong 1 nhóm -> không đủ để đo entropy có ý nghĩa, bỏ qua reading này
+
+
+def shannon_entropy_nats(values: Sequence[int]) -> float:
+    """Entropy Shannon (natural log / nats) của 1 danh sách giá trị rời rạc.
+    Với RR có tối đa 9 giá trị (RR_MIN..RR_MAX), entropy tối đa lý thuyết
+    (phân phối đều tuyệt đối trên 9 giá trị) = ln(9) ≈ 2.197 nats."""
+    n = len(values)
+    if n == 0:
+        return 0.0
+    counts = Counter(values)
+    h = 0.0
+    for c in counts.values():
+        p = c / n
+        h -= p * math.log(p)
+    return h
+
+
+@dataclass
+class RREntropyState:
+    ema_entropy: float
+    bonus: float
+    prev_error: float = 0.0
+
+
+class RREntropyController:
+    def __init__(self):
+        self.state: Optional[RREntropyState] = None
+        self._readings: List[float] = []
+
+    def seed_from_round_config(self, round_config: RoundConfig) -> None:
+        """Seed ema_entropy = floor (giả định 'ở biên', bonus=0 lúc khởi
+        động — tránh vài step đầu bonus phản ứng nhầm hướng do ema=0),
+        bonus=0.0, prev_error=0.0 — cùng triết lý seed với EMABuffController."""
+        self.state = RREntropyState(
+            ema_entropy=round_config.rr_entropy_floor,
+            bonus=0.0,
+            prev_error=0.0,
+        )
+        self._readings.clear()
+
+    def record_entropy(self, h: float) -> None:
+        self._readings.append(h)
+
+    def on_step_end(self, round_config: RoundConfig) -> None:
+        """Nếu KHÔNG có reading nào trong step này (không nhóm rollout nào
+        đủ mẫu RR — vd toàn bộ batch là HOLD/WAIT/CANCEL) thì bỏ qua, giữ
+        nguyên state cũ, tránh update dựa trên dữ liệu rỗng."""
+        if self.state is None or not self._readings:
+            self._readings.clear()
+            return
+
+        mean_h = sum(self._readings) / len(self._readings)
+        st = self.state
+
+        st.ema_entropy = (
+            (1.0 - round_config.rr_entropy_ema_alpha) * mean_h
+            + round_config.rr_entropy_ema_alpha * st.ema_entropy
+        )
+
+        # Error CHỈ DƯƠNG khi ema_entropy dưới floor — 1 chiều, KHÔNG ép
+        # entropy lên cao hơn floor khi nó đã ổn (khác buff nhóm 2 chiều).
+        error = max(0.0, round_config.rr_entropy_floor - st.ema_entropy)
+        d_error = error - st.prev_error
+        st.prev_error = error
+
+        delta = round_config.rr_entropy_kp * error + round_config.rr_entropy_kd * d_error
+        delta = _clip(delta, -round_config.rr_entropy_bonus_step_max, round_config.rr_entropy_bonus_step_max)
+        # Sàn dưới CỐ ĐỊNH = 0.0 (không có field min riêng — bonus không
+        # bao giờ âm, chỉ có thể "tắt" hẳn về 0 khi entropy đã hồi phục).
+        st.bonus = _clip(st.bonus + delta, 0.0, round_config.rr_entropy_bonus_cap)
+
+        self._readings.clear()
+
+    def get_bonus(self) -> float:
+        return self.state.bonus if self.state is not None else 0.0
+
+    def snapshot(self) -> Dict[str, float]:
+        if self.state is None:
+            return {}
+        return {"ema_entropy": self.state.ema_entropy, "bonus": self.state.bonus, "prev_error": self.state.prev_error}
+
+    def state_dict(self) -> Dict[str, float]:
+        return self.snapshot()
+
+    def load_state_dict(self, data: Dict[str, float]) -> None:
+        self.state = RREntropyState(
+            ema_entropy=float(data["ema_entropy"]),
+            bonus=float(data["bonus"]),
+            prev_error=float(data.get("prev_error", 0.0)),
+        )
+
+    def save(self, path: str) -> None:
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(self.state_dict(), ensure_ascii=False), encoding="utf-8")
+
+    def load(self, path: str) -> bool:
+        """Trả True nếu load thành công. Caller (train_grpo.py) PHẢI gọi
+        seed_from_round_config() khi trả về False — giống hệt quy ước của
+        EMABuffController.load()."""
+        p = Path(path)
+        if not p.exists():
+            return False
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+            self.load_state_dict(data)
+            return True
+        except Exception:
+            return False
+
+
+rr_entropy_controller = RREntropyController()
 
 buff_controller = EMABuffController()
 
@@ -466,13 +603,26 @@ def compute_outcome_score(
     return forward_result.r_multiple - fee_in_r + buff
 
 
-def score_completion(
+def _score_completion_full(
     prompt: str,
     completion: str,
     future_bins: Sequence[Sequence[int]],
     stats: Optional[StatsCollector] = None,
     buffs: Optional[EMABuffController] = None,
-) -> float:
+    rr_bonus: float = 0.0,
+) -> Tuple[float, Optional[str], Optional[int], bool]:
+    """
+    Logic ĐẦY ĐỦ — trả thêm (action_type, rr, overall_semantic_passed) để
+    unified_reward_func group theo prompt và tính entropy RR mà KHÔNG phải
+    parse lại completion lần 2 (Parser.from_text tốn tương đối rẻ nhưng
+    không có lý do gì để làm 2 lần khi đã có kết quả ở đây).
+
+    rr_bonus: bonus TOÀN CỤC từ RREntropyController.get_bonus() — cộng vào
+    outcome_score CHỈ khi action_type in OUTCOME_ACTIONS và pass cả 2 gate
+    (well-form + semantic) — cùng điều kiện với nơi buff nhóm được cộng.
+    Mặc định 0.0 để score_completion() (wrapper cũ, dùng bởi demos/tests)
+    không đổi hành vi nếu không truyền.
+    """
     buffs = buffs if buffs is not None else buff_controller
     round_config = get_active_round_config()
     future_candles: List[FutureCandle] = [tuple(c) for c in future_bins]
@@ -481,16 +631,17 @@ def score_completion(
     parse_result = Parser.from_text(prompt + " " + completion).parse()
 
     if not parse_result.is_well_formed():
+        program = parse_result.ast
+        action_type = program.action.action_type if program and program.action else None
         if stats is not None:
-            program = parse_result.ast
             stats.log(RolloutRecord(
                 trend=program.think.trend if program and program.think else None,
-                action_type=program.action.action_type if program and program.action else None,
+                action_type=action_type,
                 intended_action_type=intended_action,
                 outcome_status=None, r_multiple=None,
                 well_formed=False, semantic_passed=False,
             ))
-        return parse_result.well_form_score()
+        return parse_result.well_form_score(), action_type, None, False
 
     program = parse_result.ast
     think, action = program.think, program.action
@@ -524,11 +675,17 @@ def score_completion(
                 outcome_status=None, r_multiple=None,
                 well_formed=True, semantic_passed=False, sl_valid=sl_valid,
             ))
-        return R_WF_FULL + sem_score
+        return R_WF_FULL + sem_score, action_type, None, False
 
     K = round_config.pass_gate2_bonus
     zone_score = compute_zone_score(think, future_candles, round_config)
     outcome_score = compute_outcome_score(action, think, forward_result, round_config, buffs)
+
+    # THÊM MỚI — bonus entropy RR, CHỈ áp dụng cho BUY/SELL (RR chỉ tồn
+    # tại ở 2 action này), cộng CÙNG TẦNG với outcome_score.
+    if action_type in OUTCOME_ACTIONS:
+        outcome_score += rr_bonus
+
     reward = K + zone_score + outcome_score
 
     if action_type == "HOLD":
@@ -538,9 +695,9 @@ def score_completion(
     elif action_type in ("WAIT_BUY", "WAIT_SELL"):
         reward += buffs.get_buff(action_type)
 
-    # record() gọi trên CHÍNH object `buffs` đang dùng (không hardcode global)
-    # — quan trọng để unit test truyền buffs riêng không đụng global thật.
     buffs.record(action_type)
+
+    rr_out = action.rr if action_type in OUTCOME_ACTIONS else None
 
     if stats is not None:
         stats.log(RolloutRecord(
@@ -548,8 +705,24 @@ def score_completion(
             outcome_status=forward_result.status.value if forward_result else None,
             r_multiple=forward_result.r_multiple if forward_result else None,
             well_formed=True, semantic_passed=True, sl_valid=sl_valid,
-            rr=action.rr if action_type in OUTCOME_ACTIONS else None,
+            rr=rr_out,
         ))
+    return reward, action_type, rr_out, True
+
+
+def score_completion(
+    prompt: str,
+    completion: str,
+    future_bins: Sequence[Sequence[int]],
+    stats: Optional[StatsCollector] = None,
+    buffs: Optional[EMABuffController] = None,
+) -> float:
+    """Wrapper TƯƠNG THÍCH NGƯỢC — giữ nguyên chữ ký/hành vi cũ cho demos/
+    tests (vd demos/reward_func_demo.py). rr_bonus mặc định 0.0 (KHÔNG áp
+    dụng entropy bonus ở đây) — chỉ unified_reward_func mới tính và truyền
+    rr_bonus thật, vì chỉ ở đó mới có đủ ngữ cảnh cả batch để group theo
+    prompt và đo entropy."""
+    reward, _, _, _ = _score_completion_full(prompt, completion, future_bins, stats=stats, buffs=buffs)
     return reward
 
 
@@ -559,7 +732,43 @@ def unified_reward_func(
     future_bins: Sequence[Sequence[Sequence[int]]],
     **kwargs: Any,
 ) -> List[float]:
-    return [
-        score_completion(prompt, completion, fb, stats=stats_collector, buffs=buff_controller)
-        for prompt, completion, fb in zip(prompts, completions, future_bins)
-    ]
+    n = len(prompts)
+
+    # --- Pass 1: tính reward CHƯA có entropy bonus, thu thập (action_type, rr)
+    # để group theo prompt — bonus áp dụng ở Pass 2 vì cần biết entropy của
+    # CẢ NHÓM trước khi cộng cho từng completion trong nhóm đó. ---
+    base_rewards: List[float] = [0.0] * n
+    metas: List[Tuple[Optional[str], Optional[int]]] = [(None, None)] * n
+
+    for i, (prompt, completion, fb) in enumerate(zip(prompts, completions, future_bins)):
+        reward, action_type, rr, _ = _score_completion_full(
+            prompt, completion, fb, stats=stats_collector, buffs=buff_controller, rr_bonus=0.0,
+        )
+        base_rewards[i] = reward
+        metas[i] = (action_type, rr)
+
+    # --- Group theo prompt (num_generations completion liên tiếp cùng 1
+    # prompt) để đo entropy RR NỘI BỘ mỗi nhóm rollout. ---
+    groups: Dict[Any, List[int]] = defaultdict(list)
+    for i, prompt in enumerate(prompts):
+        action_type, rr = metas[i]
+        if action_type in OUTCOME_ACTIONS and rr is not None:
+            groups[prompt].append(rr)
+
+    for rr_list in groups.values():
+        if len(rr_list) >= MIN_SAMPLES_FOR_RR_ENTROPY:
+            h = shannon_entropy_nats(rr_list)
+            rr_entropy_controller.record_entropy(h)
+
+    # --- Pass 2: cộng bonus TOÀN CỤC hiện tại (từ step trước, chưa update
+    # bởi on_step_end của step NÀY — cùng nhịp với cách buff_controller
+    # hoạt động: record trong step, on_step_end update sau khi step xong)
+    # cho mọi completion BUY/SELL đã pass cả 2 gate. ---
+    bonus = rr_entropy_controller.get_bonus()
+    if bonus > 0.0:
+        for i in range(n):
+            action_type, rr = metas[i]
+            if action_type in OUTCOME_ACTIONS and rr is not None:
+                base_rewards[i] += bonus
+
+    return base_rewards

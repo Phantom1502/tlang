@@ -16,27 +16,42 @@ _REQUIRED_KEYS = (
     "sl_valid_bonus",
     "sl_valid_penalty",
     "trade_fee_bins",
-    # 3 nhóm target tường minh — WAIT tự bù = 1 - tổng 3 nhóm này (mục 3, chốt lượt trước)
     "target_hold_ratio",
     "target_buy_ratio",
     "target_sell_ratio",
     "target_cancel_ratio",
-    # EMA + PD control — DÙNG CHUNG cho cả 4 nhóm. buff_kd (D-term) THÊM MỚI —
-    # "phanh sớm" chống overshoot: delta = kp*error + kd*(error - prev_error).
-    # buff_kd=0 tương đương P-only (hành vi cũ), nên nâng cấp này an toàn
-    # ngược (backward-safe) về mặt CÔNG THỨC — nhưng field vẫn BẮT BUỘC khai
-    # báo tường minh trong JSON (không có default ngầm) để tránh quên set
-    # nhầm mà không biết, đúng tinh thần "RoundConfig fail-loud nếu thiếu".
     "ema_alpha",
     "buff_kp",
     "buff_kd",
     "buff_step_max",
-    # range riêng từng nhóm
     "buy_buff_min", "buy_buff_max",
     "sell_buff_min", "sell_buff_max",
     "hold_buff_min", "hold_buff_max",
     "cancel_buff_min", "cancel_buff_max",
     "wait_buff_min", "wait_buff_max",
+    # =================================================================
+    # THÊM MỚI — RR entropy floor (chống "exploration collapse" cho RR
+    # của BUY/SELL, TÁCH BIỆT hoàn toàn khỏi buff nhóm action ở trên).
+    #
+    # KHÁC BẢN CHẤT với buff nhóm: đây là 1 FLOOR MỘT CHIỀU (không phải
+    # target 2 chiều) — RR không có "tỉ lệ đúng" cố định, entropy cao hay
+    # thấp còn tuỳ context input; chỉ can thiệp khi entropy Shannon của
+    # phân phối RR TRONG 1 NHÓM ROLLOUT (num_generations completion cùng
+    # 1 prompt) tụt xuống dưới floor — dấu hiệu model gần như luôn sinh
+    # đúng 1 giá trị RR bất kể context, khiến advantage trong nhóm không
+    # còn gì để so sánh (exploration đã chết), không phải vì đó là lựa
+    # chọn tối ưu theo outcome thật.
+    #
+    # rr_entropy_floor tính bằng NATURAL LOG (nats) — với RR có tối đa 9
+    # giá trị (1..9, xem RR_MIN/RR_MAX ở app/lang/tokens.py), entropy tối
+    # đa lý thuyết = ln(9) ≈ 2.197 nats khi phân phối đều tuyệt đối.
+    # =================================================================
+    "rr_entropy_floor",
+    "rr_entropy_ema_alpha",
+    "rr_entropy_kp",
+    "rr_entropy_kd",
+    "rr_entropy_bonus_step_max",
+    "rr_entropy_bonus_cap",
 )
 
 # PHẢI khớp R_WF_FULL/R_SEM_FULL trong reward_func.py — không import trực tiếp
@@ -54,7 +69,7 @@ class RoundConfig:
     sl_min_dist_bins: int
     sl_max_dist_bins: int
 
-    pass_gate2_bonus: float       # K — sàn tuyệt đối khi pass gate well-form + semantic
+    pass_gate2_bonus: float
     zone_score_scale: float
     sl_valid_bonus: float
     sl_valid_penalty: float
@@ -64,14 +79,11 @@ class RoundConfig:
     target_buy_ratio: float
     target_sell_ratio: float
     target_cancel_ratio: float
-    # target_wait_ratio KHÔNG khai báo field — suy ra trong __post_init__,
-    # KHÔNG đọc/ghi trực tiếp từ JSON (đây là chốt thiết kế: 3 nhóm tường
-    # minh, 1 nhóm tự bù).
 
-    ema_alpha: float              # ema_new = (1-alpha)*rate_step + alpha*ema_old
-    buff_kp: float                # delta = kp * error, error = target - ema_ratio
-    buff_kd: float                # delta += kd * (error - prev_error) — "phanh sớm", chống overshoot
-    buff_step_max: float          # trần |delta| mỗi lần update (1 lần / optimizer step)
+    ema_alpha: float
+    buff_kp: float
+    buff_kd: float
+    buff_step_max: float
 
     buy_buff_min: float
     buy_buff_max: float
@@ -83,6 +95,14 @@ class RoundConfig:
     cancel_buff_max: float
     wait_buff_min: float
     wait_buff_max: float
+
+    # THÊM MỚI — xem giải thích ở _REQUIRED_KEYS phía trên.
+    rr_entropy_floor: float           # ngưỡng sàn (nats) — dưới ngưỡng này bonus bắt đầu kích hoạt
+    rr_entropy_ema_alpha: float       # EMA riêng cho entropy reading, ĐỘC LẬP với ema_alpha của buff nhóm
+    rr_entropy_kp: float              # P-term: delta = kp * max(0, floor - ema_entropy)
+    rr_entropy_kd: float              # D-term: "phanh"/decay sớm khi entropy đang hồi phục nhanh
+    rr_entropy_bonus_step_max: float  # trần |delta| mỗi lần update (1 lần/optimizer step)
+    rr_entropy_bonus_cap: float       # trần TUYỆT ĐỐI của bonus (sàn dưới luôn = 0.0, không cần field riêng)
 
     # init=None -> mặc định = min (giữ hành vi cũ của buff_init trước đây)
     buy_buff_init: Optional[float] = None
@@ -124,7 +144,7 @@ class RoundConfig:
                 f"target_hold_ratio + target_buy_ratio + target_sell_ratio + target_cancel_ratio = {group_sum:.4f}, "
                 f"phải nằm trong [0,1] (phần còn lại tự suy ra cho WAIT)."
             )
-        self.target_wait_ratio = 1.0 - group_sum   # attribute suy ra, KHÔNG phải dataclass field
+        self.target_wait_ratio = 1.0 - group_sum
 
         if not (0.0 <= self.ema_alpha < 1.0):
             raise ValueError(f"ema_alpha phải nằm trong [0,1), nhận {self.ema_alpha}.")
@@ -145,21 +165,25 @@ class RoundConfig:
         if self.sl_min_dist_bins <= 0:
             raise ValueError(f"sl_min_dist_bins phải > 0, nhận {self.sl_min_dist_bins}.")
 
-        # ==============================================================
-        # Bất biến bắt buộc, MỞ RỘNG cho đủ 4 nhóm (trước đây chỉ check
-        # TRADE/HOLD) — worst-case reward khi PASS gate của MỖI nhóm phải
-        # LỚN HƠN worst-case khi FAIL gate nhẹ nhất (semantic fail).
-        #
-        # worst_zone_score áp dụng cho MỌI action có zone (TRADE/CANCEL/WAIT
-        # đều có zone; HOLD thì KHÔNG — RANGE không zone).
-        # worst_outcome_score CHỈ áp dụng cho TRADE (BUY/SELL là action duy
-        # nhất có outcome_score, xem compute_outcome_score).
-        #
-        # LƯU Ý: bất biến này chỉ xét buff_MIN của từng nhóm (worst-case buff),
-        # KHÔNG phụ thuộc buff_kp/buff_kd — vì buff luôn bị clip trong
-        # [group_min, group_max] bất kể công thức PD tính delta thế nào, nên
-        # thêm D-term KHÔNG ảnh hưởng gì tới bất biến này, không cần sửa.
-        # ==============================================================
+        # THÊM MỚI — validation cho RR entropy controller. Không có bất
+        # biến nào cần thêm vào worst_by_group bên dưới: bonus này CỘNG
+        # THÊM, LUÔN >= 0 (sàn dưới cố định 0.0, không có field min riêng),
+        # nên worst-case reward khi PASS gate KHÔNG bị giảm bởi cơ chế
+        # này — bất biến "worst pass > gate2_fail_max" vẫn đúng nguyên
+        # vẹn như trước khi thêm entropy bonus (worst case = bonus 0).
+        if self.rr_entropy_floor < 0:
+            raise ValueError(f"rr_entropy_floor phải >= 0, nhận {self.rr_entropy_floor}.")
+        if not (0.0 <= self.rr_entropy_ema_alpha < 1.0):
+            raise ValueError(f"rr_entropy_ema_alpha phải nằm trong [0,1), nhận {self.rr_entropy_ema_alpha}.")
+        if self.rr_entropy_kp < 0:
+            raise ValueError(f"rr_entropy_kp phải >= 0, nhận {self.rr_entropy_kp}.")
+        if self.rr_entropy_kd < 0:
+            raise ValueError(f"rr_entropy_kd phải >= 0, nhận {self.rr_entropy_kd}.")
+        if self.rr_entropy_bonus_step_max < 0:
+            raise ValueError(f"rr_entropy_bonus_step_max phải >= 0, nhận {self.rr_entropy_bonus_step_max}.")
+        if self.rr_entropy_bonus_cap < 0:
+            raise ValueError(f"rr_entropy_bonus_cap phải >= 0, nhận {self.rr_entropy_bonus_cap}.")
+
         fee_worst = self.trade_fee_bins / self.sl_min_dist_bins
         worst_zone_score = -1.0 * self.zone_score_scale
         worst_outcome_score = -1.0 - fee_worst
@@ -220,6 +244,12 @@ class RoundConfig:
             cancel_buff_max=float(data["cancel_buff_max"]),
             wait_buff_min=float(data["wait_buff_min"]),
             wait_buff_max=float(data["wait_buff_max"]),
+            rr_entropy_floor=float(data["rr_entropy_floor"]),
+            rr_entropy_ema_alpha=float(data["rr_entropy_ema_alpha"]),
+            rr_entropy_kp=float(data["rr_entropy_kp"]),
+            rr_entropy_kd=float(data["rr_entropy_kd"]),
+            rr_entropy_bonus_step_max=float(data["rr_entropy_bonus_step_max"]),
+            rr_entropy_bonus_cap=float(data["rr_entropy_bonus_cap"]),
             buy_buff_init=data.get("buy_buff_init"),
             sell_buff_init=data.get("sell_buff_init"),
             hold_buff_init=data.get("hold_buff_init"),
@@ -230,6 +260,4 @@ class RoundConfig:
     def save(self, path: str) -> None:
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
-        # target_wait_ratio là attribute suy ra (không phải dataclass field
-        # khai báo) -> asdict() KHÔNG tự gồm nó, không cần pop tay.
         p.write_text(json.dumps(asdict(self), indent=2, ensure_ascii=False), encoding="utf-8")

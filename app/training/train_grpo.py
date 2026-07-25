@@ -219,9 +219,11 @@ def main() -> None:
     from trl import GRPOConfig, GRPOTrainer
     from transformers import TrainerCallback
     
+    # Trong phần import từ app.training.reward.reward_func, thêm:
     from app.training.reward.reward_func import (
         StatsCollector,
         buff_controller,
+        rr_entropy_controller,      # THÊM MỚI
         stats_collector,
         unified_reward_func,
     )
@@ -349,6 +351,27 @@ def main() -> None:
         logger.info(f"[rank={rank}] Seed buff_controller từ round_config: {buff_controller.snapshot()}")
 
     # ------------------------------------------------------------
+    # rr_entropy_controller state — CÙNG QUY ƯỚC với buff_controller (gắn
+    # vào checkpoint, chỉ load khi resume CHÍNH round này, round mới init
+    # từ round trước LUÔN seed lại — floor/kp/kd có thể đã đổi giữa các
+    # round). File RIÊNG (rr_entropy_state.json) để không phá format cũ
+    # của reward_state.json.
+    # ------------------------------------------------------------
+    rr_entropy_loaded = False
+    if resume_checkpoint is not None:
+        rr_entropy_state_path = os.path.join(resume_checkpoint, "rr_entropy_state.json")
+        rr_entropy_loaded = rr_entropy_controller.load(rr_entropy_state_path)
+        if rr_entropy_loaded:
+            logger.info(f"[rank={rank}] Đã khôi phục rr_entropy_controller từ {rr_entropy_state_path}: {rr_entropy_controller.snapshot()}")
+        else:
+            logger.warning(
+                f"[rank={rank}] Không đọc được {rr_entropy_state_path} — fallback seed lại từ round_config."
+            )
+    if not rr_entropy_loaded:
+        rr_entropy_controller.seed_from_round_config(round_config)
+        logger.info(f"[rank={rank}] Seed rr_entropy_controller từ round_config: {rr_entropy_controller.snapshot()}")
+        
+    # ------------------------------------------------------------
     # Dataset GRPO — chỉ cần "prompt" (model tự sinh phần còn lại) +
     # future_bins/symbol/window_id cho reward_func — remove_unused_columns
     # PHẢI False (mục 6.1/8.2), nếu không TRL tự xoá hết cột trừ "prompt".
@@ -390,10 +413,9 @@ def main() -> None:
 
     class StatsPersistCallback(TrainerCallback):
         def on_step_end(self, args, state, control, **kwargs):
-            # EMA + proportional update — 1 LẦN / optimizer step, KHÔNG phụ
-            # thuộc save_steps (decouple hẳn khỏi checkpoint cadence).
             buff_controller.on_step_end(round_config)
-            
+            rr_entropy_controller.on_step_end(round_config)   # THÊM MỚI — cùng nhịp với buff
+
         def on_log(self, args, state, control, **kwargs):
             snapshot = buff_controller.snapshot()
             for group, metrics in snapshot.items():
@@ -402,34 +424,37 @@ def main() -> None:
                     f"buff={metrics['buff']:.4f}, "
                     f"prev_error={metrics['prev_error']:.4f}"
                 )
+            rr_snap = rr_entropy_controller.snapshot()          # THÊM MỚI
+            if rr_snap:
+                print(
+                    f"RR_ENTROPY: ema_entropy={rr_snap['ema_entropy']:.4f}, "
+                    f"bonus={rr_snap['bonus']:.4f}, prev_error={rr_snap['prev_error']:.4f}"
+                )
 
         def on_save(self, args, state, control, **kwargs):
             n_records = len(stats_collector._records)
 
             print(f"\n=== [step={state.global_step}] Chu kỳ report vừa xong ({n_records} record) ===")
             stats_collector.print_summary()
-            print(f"buff_controller hiện tại: {buff_controller.snapshot()}\n")
+            print(f"buff_controller hiện tại: {buff_controller.snapshot()}")
+            print(f"rr_entropy_controller hiện tại: {rr_entropy_controller.snapshot()}\n")
 
             stats_collector.save(stats_path)
             stats_collector.reset()
 
-            # Ghi reward_state.json vào ĐÚNG thư mục checkpoint vừa save — best
-            # effort. Nếu push_to_hub("checkpoint") chạy TRƯỚC on_save trong
-            # version transformers đang cài, bản trên Hub có thể thiếu file
-            # này; load() ở lần resume sau tự fallback seed lại từ
-            # round_config, không crash (đã chốt đây là edge case chấp nhận
-            # được, không chặn thiết kế).
             ckpt_dir = os.path.join(args.output_dir, f"{PREFIX_CHECKPOINT_DIR}-{state.global_step}")
             if os.path.isdir(ckpt_dir):
                 buff_controller.save(os.path.join(ckpt_dir, "reward_state.json"))
-                logger.info(f"[rank={rank}] Đã lưu reward_state -> {ckpt_dir}/reward_state.json")
+                rr_entropy_controller.save(os.path.join(ckpt_dir, "rr_entropy_state.json"))   # THÊM MỚI
+                logger.info(f"[rank={rank}] Đã lưu reward_state + rr_entropy_state -> {ckpt_dir}/")
             else:
-                logger.warning(f"[rank={rank}] Checkpoint dir {ckpt_dir} chưa tồn tại lúc on_save — bỏ qua lưu reward_state.")
+                logger.warning(f"[rank={rank}] Checkpoint dir {ckpt_dir} chưa tồn tại lúc on_save — bỏ qua lưu state.")
 
         def on_train_end(self, args, state, control, **kwargs):
             print(f"\n=== [train_end] Chu kỳ report cuối cùng ===")
             stats_collector.print_summary()
-            print(f"buff_controller cuối: {buff_controller.snapshot()}\n")
+            print(f"buff_controller cuối: {buff_controller.snapshot()}")
+            print(f"rr_entropy_controller cuối: {rr_entropy_controller.snapshot()}\n")
             stats_collector.save(stats_path)
 
     trainer = GRPOTrainer(
@@ -447,6 +472,7 @@ def main() -> None:
     canonical_tok = load_tokenizer(repo_id=args.repo_id, allow_local_fallback=False)
     canonical_tok.save_pretrained(args.output_dir)
     buff_controller.save(os.path.join(args.output_dir, "reward_state.json"))
+    rr_entropy_controller.save(os.path.join(args.output_dir, "rr_entropy_state.json"))   # THÊM MỚI
     stats_collector.save(stats_path)
     
     if push_to_hub:
