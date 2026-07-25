@@ -11,22 +11,22 @@
   "trade_fee_bins": 0.65,
 
   "target_hold_ratio": 0.06,
-  "target_buy_ratio": 0.3,
-  "target_sell_ratio": 0.3,
+  "target_buy_ratio": 0.30,
+  "target_sell_ratio": 0.30,
   "target_cancel_ratio": 0.17,
 
   "ema_alpha": 0.9,
   "buff_kp": 0.02,
   "buff_kd": 0.01,
-  "buff_step_max": 0.0005,
+  "buff_step_max": 0.001,
 
   "buy_buff_min": 0.20,  
-  "buy_buff_max": 0.60,  
-  "buy_buff_init": 0.60,
+  "buy_buff_max": 0.50,  
+  "buy_buff_init": 0.20,
 
   "sell_buff_min": 0.20,  
-  "sell_buff_max": 0.60,  
-  "sell_buff_init": 0.60,
+  "sell_buff_max": 0.50,  
+  "sell_buff_init": 0.20,
 
   "hold_buff_min": 0.00,   
   "hold_buff_max": 0.05,   
