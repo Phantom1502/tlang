@@ -24,9 +24,9 @@
   "buy_buff_max": 0.50,  
   "buy_buff_init": 0.45,
 
-  "sell_buff_min": 0.45,  
-  "sell_buff_max": 0.50,  
-  "sell_buff_init": 0.45,
+  "sell_buff_min": 0.35,  
+  "sell_buff_max": 0.40,  
+  "sell_buff_init": 0.35,
 
   "hold_buff_min": 0.00,   
   "hold_buff_max": 0.05,   
