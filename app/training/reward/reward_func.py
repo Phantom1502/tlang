@@ -726,6 +726,14 @@ def score_completion(
     return reward
 
 
+def _entropy_and_probs(values: Sequence[int]) -> Tuple[float, Dict[int, float]]:
+    n = len(values)
+    counts = Counter(values)
+    probs = {v: c / n for v, c in counts.items()}
+    h = -sum(p * math.log(p) for p in probs.values())
+    return h, probs
+
+
 def unified_reward_func(
     prompts: Sequence[Any],
     completions: Sequence[str],
@@ -734,9 +742,6 @@ def unified_reward_func(
 ) -> List[float]:
     n = len(prompts)
 
-    # --- Pass 1: tính reward CHƯA có entropy bonus, thu thập (action_type, rr)
-    # để group theo prompt — bonus áp dụng ở Pass 2 vì cần biết entropy của
-    # CẢ NHÓM trước khi cộng cho từng completion trong nhóm đó. ---
     base_rewards: List[float] = [0.0] * n
     metas: List[Tuple[Optional[str], Optional[int]]] = [(None, None)] * n
 
@@ -747,28 +752,38 @@ def unified_reward_func(
         base_rewards[i] = reward
         metas[i] = (action_type, rr)
 
-    # --- Group theo prompt (num_generations completion liên tiếp cùng 1
-    # prompt) để đo entropy RR NỘI BỘ mỗi nhóm rollout. ---
-    groups: Dict[Any, List[int]] = defaultdict(list)
+    # Group theo prompt -> danh sách INDEX (không phải rr list trực tiếp,
+    # cần index để ghi bonus khác nhau cho từng completion trong nhóm).
+    groups_idx: Dict[Any, List[int]] = defaultdict(list)
     for i, prompt in enumerate(prompts):
         action_type, rr = metas[i]
         if action_type in OUTCOME_ACTIONS and rr is not None:
-            groups[prompt].append(rr)
+            groups_idx[prompt].append(i)
 
-    for rr_list in groups.values():
-        if len(rr_list) >= MIN_SAMPLES_FOR_RR_ENTROPY:
-            h = shannon_entropy_nats(rr_list)
-            rr_entropy_controller.record_entropy(h)
+    strength = rr_entropy_controller.get_bonus()   # hệ số nhân, KHÔNG PHẢI hằng số cộng thẳng
 
-    # --- Pass 2: cộng bonus TOÀN CỤC hiện tại (từ step trước, chưa update
-    # bởi on_step_end của step NÀY — cùng nhịp với cách buff_controller
-    # hoạt động: record trong step, on_step_end update sau khi step xong)
-    # cho mọi completion BUY/SELL đã pass cả 2 gate. ---
-    bonus = rr_entropy_controller.get_bonus()
-    if bonus > 0.0:
-        for i in range(n):
-            action_type, rr = metas[i]
-            if action_type in OUTCOME_ACTIONS and rr is not None:
-                base_rewards[i] += bonus
+    for idx_list in groups_idx.values():
+        if len(idx_list) < MIN_SAMPLES_FOR_RR_ENTROPY:
+            continue
+
+        rr_list = [metas[i][1] for i in idx_list]
+        h, probs = _entropy_and_probs(rr_list)
+        rr_entropy_controller.record_entropy(h)   # đo entropy để update controller ở on_step_end, KHÔNG đổi vì strength
+
+        if strength <= 0.0:
+            continue
+
+        # THEN — mấu chốt của fix: mỗi completion trong CÙNG 1 nhóm nhận
+        # bonus KHÁC NHAU theo độ hiếm (surprisal = -ln p) của chính RR nó
+        # chọn TRONG NHÓM ĐÓ. Completion RR phổ biến (p lớn) -> surprisal
+        # nhỏ -> bonus nhỏ. Completion RR hiếm (p nhỏ) -> surprisal lớn ->
+        # bonus lớn. Vì GRPO trừ mean của CHÍNH NHÓM NÀY khi tính advantage,
+        # chênh lệch bonus giữa các completion trong nhóm mới thực sự biến
+        # thành gradient — cộng hằng số đều cho cả nhóm (bug bản trước) bị
+        # triệt tiêu hoàn toàn bởi phép trừ group_mean, không tạo tín hiệu gì.
+        for i in idx_list:
+            rr_i = metas[i][1]
+            surprisal = -math.log(probs[rr_i])
+            base_rewards[i] += strength * surprisal
 
     return base_rewards

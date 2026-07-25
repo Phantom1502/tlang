@@ -40,7 +40,7 @@
   "wait_buff_max": 0.05,   
   "wait_buff_init": 0.00,
 
-  "rr_entropy_floor": 1.0,
+  "rr_entropy_floor": 0.3,
   "rr_entropy_ema_alpha": 0.9,
   "rr_entropy_kp": 0.02,
   "rr_entropy_kd": 0.01,
