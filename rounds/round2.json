@@ -1,5 +1,5 @@
 {
-  "round_id": "round1",
+  "round_id": "round2",
   "zone_width_min_bins": 5,
   "zone_width_max_bins": 20,
   "sl_min_dist_bins": 5,
@@ -11,9 +11,9 @@
   "trade_fee_bins": 0.65,
 
   "target_hold_ratio": 0.06,
-  "target_buy_ratio": 0.30,
-  "target_sell_ratio": 0.30,
-  "target_cancel_ratio": 0.17,
+  "target_buy_ratio": 0.28,
+  "target_sell_ratio": 0.28,
+  "target_cancel_ratio": 0.19,
 
   "ema_alpha": 0.9,
   "buff_kp": 0.02,
@@ -26,7 +26,7 @@
 
   "sell_buff_min": 0.15,  
   "sell_buff_max": 0.35,  
-  "sell_buff_init": 0.21,
+  "sell_buff_init": 0.20,
 
   "hold_buff_min": 0.00,   
   "hold_buff_max": 0.10,   
@@ -37,8 +37,8 @@
   "cancel_buff_init": 0.00,
   
   "wait_buff_min": 0.00,   
-  "wait_buff_max": 0.15,   
-  "wait_buff_init": 0.15,
+  "wait_buff_max": 0.10,   
+  "wait_buff_init": 0.00,
 
   "rr_entropy_floor": 0.3,
   "rr_entropy_ema_alpha": 0.9,

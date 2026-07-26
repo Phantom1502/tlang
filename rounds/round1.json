@@ -37,7 +37,7 @@
   "cancel_buff_init": 0.00,
   
   "wait_buff_min": 0.00,   
-  "wait_buff_max": 0.15,   
+  "wait_buff_max": 0.10,   
   "wait_buff_init": 0.00,
 
   "rr_entropy_floor": 0.3,
