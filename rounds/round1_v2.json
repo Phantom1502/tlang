@@ -1,0 +1,44 @@
+{
+  "round_id": "round1_v2",
+  "zone_width_min_bins": 5,
+  "zone_width_max_bins": 20,
+  "sl_min_dist_bins": 5,
+  "sl_max_dist_bins": 20,
+  "trade_fee_bins": 0.65,
+  "entry_score_weight": 0.2,
+
+  "action_ema_alpha": 0.9,
+  "action_buff_kp": 0.02,
+  "action_buff_kd": 0.01,
+  "action_buff_step_max": 0.0005,
+
+  "action_hold_target_ratio": 0.06,
+  "action_buy_target_ratio": 0.28,
+  "action_sell_target_ratio": 0.28,
+  "action_cancel_buy_target_ratio": 0.095,
+  "action_cancel_sell_target_ratio": 0.095,
+  "action_wait_buy_target_ratio": 0.095,
+  "action_wait_sell_target_ratio": 0.095,
+
+  "action_hold_buff_min": 0.0, "action_hold_buff_max": 0.10, "action_hold_buff_init": 0.0,
+  "action_buy_buff_min": 0.15, "action_buy_buff_max": 0.35, "action_buy_buff_init": 0.20,
+  "action_sell_buff_min": 0.15, "action_sell_buff_max": 0.35, "action_sell_buff_init": 0.20,
+  "action_cancel_buy_buff_min": 0.0, "action_cancel_buy_buff_max": 0.10, "action_cancel_buy_buff_init": 0.0,
+  "action_cancel_sell_buff_min": 0.0, "action_cancel_sell_buff_max": 0.10, "action_cancel_sell_buff_init": 0.0,
+  "action_wait_buy_buff_min": 0.0, "action_wait_buy_buff_max": 0.10, "action_wait_buy_buff_init": 0.0,
+  "action_wait_sell_buff_min": 0.0, "action_wait_sell_buff_max": 0.10, "action_wait_sell_buff_init": 0.0,
+
+  "zone_ema_alpha": 0.9,
+  "zone_buff_kp": 0.02,
+  "zone_buff_kd": 0.01,
+  "zone_buff_step_max": 0.0005,
+  "zone_has_zone_buff_min": 0.0, "zone_has_zone_buff_max": 0.10, "zone_has_zone_buff_init": 0.0,
+  "zone_no_zone_buff_min": -0.10, "zone_no_zone_buff_max": 0.0, "zone_no_zone_buff_init": 0.0,
+
+  "rr_entropy_floor": 0.3,
+  "rr_entropy_ema_alpha": 0.9,
+  "rr_entropy_kp": 0.02,
+  "rr_entropy_kd": 0.01,
+  "rr_entropy_bonus_step_max": 0.0005,
+  "rr_entropy_bonus_cap": 0.1
+}

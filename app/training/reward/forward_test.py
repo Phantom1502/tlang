@@ -5,6 +5,7 @@ from enum import Enum
 from typing import List, Optional, Tuple
 
 from app.lang.ast_nodes import ActionNode, ThinkNode, ZoneNode
+from app.lang.tokens import RR_MAX
 
 SL_MIN_DIST_BINS = 5
 SL_MAX_DIST_BINS = 10
@@ -177,6 +178,59 @@ def partial_tp_forward_test(
     realized_r += remaining * mtm_r
     return ForwardTestResult(status=OutcomeStatus.TIMEOUT, r_multiple=realized_r)
 
+
+# =====================================================================
+# measure_max_favorable_r — THÊM MỚI cho reward v2 (Nhánh A "entry quality"
+# của task `action`, xem docs/reward_v2.md mục 5). Đo tiềm năng thực tế
+# entry+SL đã đi được TRƯỚC KHI bị đá SL/hết horizon/chạm trần — HOÀN
+# TOÀN KHÔNG phụ thuộc `rr` model chọn (đó là việc của partial_tp_forward_test
+# / outcome_score, 1 nhánh độc lập khác). Sàn = 0.0 (đo "phần thuận lợi nhất
+# đã xuất hiện", không phải P&L nên không âm).
+# =====================================================================
+ENTRY_QUALITY_CAP: float = float(RR_MAX)   # =9.0, khớp trần RR khả dụng của vocab <RR_k>
+
+
+def measure_max_favorable_r(
+    entry_bin: int,
+    sl_bin: int,
+    future_candles: List[FutureCandle],
+    direction: str,
+    cap: float = ENTRY_QUALITY_CAP,
+) -> float:
+    """
+    Trả R thuận lợi lớn nhất đã đạt được, chạy tới khi chạm SL, đạt trần
+    `cap`, hoặc hết horizon (TIMEOUT) — lấy max R TRƯỚC thời điểm dừng.
+
+    Nến gây chạm SL KHÔNG được tính max mới từ chính nó — check hit_sl
+    TRƯỚC, break ngay, giữ nguyên max_r đã ghi nhận từ các nến trước đó.
+    Nếu không tách riêng thứ tự này, 1 nến có wick dài xuyên thủng cả
+    target thuận lợi lẫn SL trong CÙNG 1 nến sẽ bị tính "thuận lợi" bằng
+    chính wick gây thua lỗ — không đúng ý nghĩa "đã đi được bao xa TRƯỚC
+    KHI đảo chiều".
+
+    risk == 0 (không nên xảy ra nếu SL đã qua is_sl_valid) -> trả 0.0,
+    KHÔNG raise (hàm này chỉ nên được gọi sau khi is_sl_valid đã pass).
+    """
+    risk = abs(entry_bin - sl_bin)
+    if risk == 0:
+        return 0.0
+
+    max_r = 0.0
+    for (o, h, l, c) in future_candles[:HORIZON]:
+        if direction == "long":
+            if l <= sl_bin:
+                break
+            max_r = max(max_r, (h - entry_bin) / risk)
+        else:
+            if h >= sl_bin:
+                break
+            max_r = max(max_r, (entry_bin - l) / risk)
+        if max_r >= cap:
+            max_r = cap
+            break
+    return max_r
+
+
 def probe_zone_quality(
     zone: ZoneNode,
     future_candles: List[FutureCandle],
@@ -186,11 +240,9 @@ def probe_zone_quality(
     else:
         entry, sl, direction = zone.lower_bin, zone.upper_bin + ZONE_PROBE_SL_BUFFER_BINS, "short"
 
-    target = derive_target(entry, sl, rr=1.0, direction=direction)
-    if target is None:
-        return ForwardTestResult(status=OutcomeStatus.INVALID_SETUP, r_multiple=0.0)
+    target = measure_max_favorable_r(entry, sl, future_candles, direction)
 
-    return forward_test(entry, sl, target, future_candles, direction)
+    return ForwardTestResult(status=OutcomeStatus.WIN, r_multiple=target)
 
 def _evaluate_outcome_impl(
     action: ActionNode,
