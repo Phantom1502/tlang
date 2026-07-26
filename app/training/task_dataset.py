@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Sequence
+from typing import Any, Dict, Optional, Sequence
 
 # =====================================================================
 # task_dataset.py — Bọc 1 dataset GRPO gốc (schema prompt/future_bins/
@@ -58,3 +58,42 @@ class TaskExpandedGRPODataset:
         if "window_id" in row:
             row["window_id"] = f"{row['window_id']}_{task_id}"
         return row
+
+
+def add_task_id_columns(dataset, tasks: tuple = TASKS, shuffle_seed: Optional[int] = None):
+    """
+    Bản THẬT SỰ VẬT CHẤT HOÁ (khác TaskExpandedGRPODataset ở trên) — dùng
+    cho GRPOTrainer, vì Trainer/GRPOTrainer của trl dựa vào API của
+    `datasets.Dataset` thật (column_names, .map, .remove_columns,
+    integration với DataLoader) ở nhiều chỗ nội bộ (đặc biệt khi
+    remove_unused_columns liên quan). Một object Python tự chế
+    (TaskExpandedGRPODataset) DÙ hỗ trợ __len__/__getitem__ vẫn CÓ RỦI RO
+    không tương thích với những chỗ Trainer gọi thẳng API kiểu HF Dataset
+    — CHƯA verify với đúng version trl đang dùng, nên train_grpo_v2.py
+    dùng hàm NÀY (trả về datasets.Dataset thật) làm đường đi an toàn mặc
+    định, thay vì TaskExpandedGRPODataset.
+
+    Input: 1 `datasets.Dataset` (HF), 1 split, schema GRPO gốc
+    (prompt/future_bins/symbol/window_id).
+    Output: `datasets.Dataset` gấp đôi số row, có thêm cột `task_id`,
+    `window_id` đã hậu tố theo task, đã shuffle lại (nếu shuffle_seed
+    truyền vào) để 2 nửa zone/action không nằm liền khối — tránh 1 batch
+    tình cờ toàn zone hoặc toàn action nếu Trainer sampler không đủ ngẫu
+    nhiên.
+    """
+    from datasets import concatenate_datasets
+
+    def _make_tagger(task_id: str):
+        def _tag(row: Dict[str, Any]) -> Dict[str, Any]:
+            row = dict(row)
+            row["task_id"] = task_id
+            if "window_id" in row:
+                row["window_id"] = f"{row['window_id']}_{task_id}"
+            return row
+        return _tag
+
+    variants = [dataset.map(_make_tagger(task_id)) for task_id in tasks]
+    combined = concatenate_datasets(variants)
+    if shuffle_seed is not None:
+        combined = combined.shuffle(seed=shuffle_seed)
+    return combined
