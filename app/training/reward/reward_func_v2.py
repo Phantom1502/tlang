@@ -37,6 +37,7 @@ from app.training.reward.reward_func import (
 )
 
 ZONE_SCALE_FACTOR = 0.1
+K = 4.5
 
 TASK_ZONE = "zone"
 TASK_ACTION = "action"
@@ -447,7 +448,8 @@ def score_completion_v2(
     if task_id == TASK_ZONE:
         zone_score = compute_zone_task_score(gate.program, future_bins)
         buffed = apply_zone_buff(zone_score.has_zone, zone_score.zone_quality, zone_buffs)
-        reward = gate.gate_score + buffed
+        #reward = gate.gate_score + buffed
+        reward = K + buffed # pass semantic score, only cal in zone quality
         meta = TaskRolloutMeta(
             task_id=task_id, trend=think.trend, action_type=action.action_type,
             intended_action_type=intended_action,
@@ -483,7 +485,8 @@ def score_completion_v2(
         return reward, meta
 
     buffed = apply_action_buff(action_score.action_type, action_score.raw_score, action_buffs)
-    reward = gate.gate_score + buffed
+    #reward = gate.gate_score + buffed
+    reward = K + buffed # pass semantic score, only cal in action quality
     meta = TaskRolloutMeta(
         task_id=task_id, trend=think.trend, action_type=action.action_type,
         intended_action_type=intended_action,
