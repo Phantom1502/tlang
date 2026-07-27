@@ -36,6 +36,8 @@ from app.training.reward.reward_func import (
     shannon_entropy_nats,
 )
 
+ZONE_SCALE_FACTOR = 0.1
+
 TASK_ZONE = "zone"
 TASK_ACTION = "action"
 TASKS: Tuple[str, ...] = (TASK_ZONE, TASK_ACTION)
@@ -133,7 +135,7 @@ def compute_zone_task_score(program: ProgramNode, future_bins: Sequence[Sequence
     probe = probe_zone_quality(think.zone, future_candles)
     if probe.status == OutcomeStatus.INVALID_SETUP:
         return ZoneTaskScore(zone_quality=0.0, probe=probe, has_zone=True)
-    return ZoneTaskScore(zone_quality=probe.r_multiple, probe=probe, has_zone=True)
+    return ZoneTaskScore(zone_quality=probe.r_multiple * ZONE_SCALE_FACTOR, probe=probe, has_zone=True)
 
 
 @dataclass
