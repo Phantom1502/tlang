@@ -1,6 +1,6 @@
 {
   "round_id": "round1_v2",
-  "zone_width_min_bins": 20,
+  "zone_width_min_bins": 15,
   "zone_width_max_bins": 40,
   "sl_min_dist_bins": 5,
   "sl_max_dist_bins": 20,
@@ -32,7 +32,7 @@
   "zone_buff_kp": 0.02,
   "zone_buff_kd": 0.01,
   "zone_buff_step_max": 0.001,
-  "zone_has_zone_buff_min": 0.0, "zone_has_zone_buff_max": 0.05, "zone_has_zone_buff_init": 0.0,
+  "zone_has_zone_buff_min": 0.0, "zone_has_zone_buff_max": 0.25, "zone_has_zone_buff_init": 0.25,
   "zone_no_zone_buff_min": 0.0, "zone_no_zone_buff_max": 0.60, "zone_no_zone_buff_init": 0.0,
 
   "rr_entropy_floor": 0.3,
