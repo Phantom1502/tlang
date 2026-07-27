@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import math
 import re
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -249,7 +249,8 @@ class TaskRolloutMeta:
     has_zone: Optional[bool]         # chỉ populate ở nhánh task=zone pass gate
     zone_quality: Optional[float]
     entry_quality: Optional[float]
-    outcome: Optional[float]
+    outcome: Optional[float]           # đã trừ phí — dùng để TÍNH REWARD
+    r_multiple: Optional[float]         # RAW, TRƯỚC phí — dùng để REPORT avg_R/win_rate (khớp quy ước v1)
     buff_applied: Optional[float]    # = reward_sau_buff - raw_score (để audit riêng phần buff đóng góp)
     reward: float
 
@@ -304,6 +305,54 @@ class StatsCollectorV2:
         """Dùng cho report — đếm TOÀN BỘ records kể từ lần reset() gần nhất."""
         return self._filter_and_count(self._records, task_id, key_fn)
 
+    def summary(self) -> Dict[str, Dict[str, dict]]:
+        """
+        Breakdown chi tiết theo trend -> action_type, CHỈ cho task=action,
+        chỉ tính trên records đã pass TOÀN BỘ gate (well_formed +
+        semantic_passed + task_passed=True) — đúng quy ước report của
+        StatsCollector v1 (freq_within_trend, avg_r_multiple RAW trước
+        phí, win_rate, avg_rr, phân phối rr). Dùng field `r_multiple`
+        (raw) chứ KHÔNG dùng `outcome` (đã trừ phí, chỉ dùng để tính
+        reward) — win_rate/avg_R ở đây là số liệu P&L thô để đọc, tách
+        biệt khỏi con số dùng nội bộ để tối ưu.
+        """
+        by_trend_total: Dict[str, int] = defaultdict(int)
+        raw: Dict[str, Dict[str, dict]] = defaultdict(
+            lambda: defaultdict(lambda: {"count": 0, "r_multiples": [], "rrs": []})
+        )
+        for r in self._records:
+            if r.task_id != TASK_ACTION or r.trend is None or r.action_type is None:
+                continue
+            if not (r.well_formed and r.semantic_passed and r.task_passed is True):
+                continue
+            by_trend_total[r.trend] += 1
+            entry = raw[r.trend][r.action_type]
+            entry["count"] += 1
+            if r.r_multiple is not None:
+                entry["r_multiples"].append(r.r_multiple)
+            if r.rr is not None:
+                entry["rrs"].append(r.rr)
+
+        result: Dict[str, Dict[str, dict]] = {}
+        for trend, actions in raw.items():
+            result[trend] = {}
+            total = by_trend_total[trend]
+            for action_type, entry in actions.items():
+                rms = entry["r_multiples"]
+                rrs = entry["rrs"]
+                avg_r = sum(rms) / len(rms) if rms else None
+                win_rate = (sum(1 for x in rms if x > 0) / len(rms)) if rms else None
+                avg_rr = sum(rrs) / len(rrs) if rrs else None
+                result[trend][action_type] = {
+                    "count": entry["count"],
+                    "freq_within_trend": entry["count"] / total if total else 0.0,
+                    "avg_r_multiple": avg_r,
+                    "win_rate": win_rate,
+                    "avg_rr": avg_rr,
+                    "rr_distribution": dict(sorted(Counter(rrs).items())) if rrs else None,
+                }
+        return result
+
     def well_form_rate_by_intended_action(self) -> Dict[str, Dict[str, Any]]:
         counts: Dict[str, Dict[str, int]] = defaultdict(lambda: {"total": 0, "well_formed": 0})
         for r in self._records:
@@ -329,6 +378,26 @@ class StatsCollectorV2:
                 print(f"  well_form_rate = {n_wf / n_task * 100:.1f}%")
             if n_wf:
                 print(f"  semantic_pass_rate (trong số well-formed) = {n_sem / n_wf * 100:.1f}%")
+
+        print("\n-- Chi tiết theo trend -> action (task=action, đã pass toàn bộ gate) --")
+        detail = self.summary()
+        if not detail:
+            print("  (chưa có mẫu nào pass gate ở task=action)")
+        for trend, actions in detail.items():
+            print(f"trend={trend}")
+            for action_type, stat in actions.items():
+                avg_r = f"{stat['avg_r_multiple']:.2f}" if stat["avg_r_multiple"] is not None else "-"
+                win_rate = f"{stat['win_rate'] * 100:.0f}%" if stat["win_rate"] is not None else "-"
+                avg_rr = f"{stat['avg_rr']:.2f}" if stat.get("avg_rr") is not None else "-"
+                line = (
+                    f"  {action_type:<12} count={stat['count']:<6} freq={stat['freq_within_trend']*100:5.1f}%  "
+                    f"avg_R={avg_r:>6}  win_rate={win_rate:>4}  avg_RR={avg_rr:>5}"
+                )
+                dist = stat.get("rr_distribution")
+                if dist:
+                    dist_str = " ".join(f"{k}:{v}" for k, v in dist.items())
+                    line += f"  rr_dist=[{dist_str}]"
+                print(line)
 
         print("\n-- Action group counts (7 nhóm, toàn bộ lịch sử từ lần reset gần nhất) --")
         action_counts, action_total = self.full_history_counts(TASK_ACTION, key_fn=lambda r: r.action_type)
@@ -369,6 +438,7 @@ class StatsCollectorV2:
         if p.exists():
             data = json.loads(p.read_text(encoding="utf-8"))
             for d in data.get("records", []):
+                d.setdefault("r_multiple", None)   # tương thích ngược file stats cũ chưa có field này
                 collector.log(TaskRolloutMeta(**d))
         return collector
 
@@ -381,6 +451,7 @@ class StatsCollectorV2:
                 continue
             data = json.loads(p.read_text(encoding="utf-8"))
             for d in data.get("records", []):
+                d.setdefault("r_multiple", None)   # tương thích ngược file stats cũ chưa có field này
                 collector.log(TaskRolloutMeta(**d))
         return collector
 
@@ -436,7 +507,7 @@ def score_completion_v2(
             intended_action_type=intended_action,
             well_formed=gate.well_formed, semantic_passed=False, task_passed=None,
             sl_valid=None, rr=None, has_zone=None,
-            zone_quality=None, entry_quality=None, outcome=None,
+            zone_quality=None, entry_quality=None, outcome=None, r_multiple=None,
             buff_applied=None, reward=gate.gate_score,
         )
         if stats is not None:
@@ -455,7 +526,7 @@ def score_completion_v2(
             intended_action_type=intended_action,
             well_formed=True, semantic_passed=True, task_passed=None,
             sl_valid=None, rr=None, has_zone=zone_score.has_zone,
-            zone_quality=zone_score.zone_quality, entry_quality=None, outcome=None,
+            zone_quality=zone_score.zone_quality, entry_quality=None, outcome=None, r_multiple=None,
             buff_applied=buffed - zone_score.zone_quality, reward=reward,
         )
         if stats is not None:
@@ -477,7 +548,7 @@ def score_completion_v2(
             intended_action_type=intended_action,
             well_formed=True, semantic_passed=False, task_passed=False,
             sl_valid=action_score.sl_valid, rr=action_score.rr, has_zone=None,
-            zone_quality=None, entry_quality=None, outcome=None,
+            zone_quality=None, entry_quality=None, outcome=None, r_multiple=None,
             buff_applied=None, reward=reward,
         )
         if stats is not None:
@@ -493,6 +564,7 @@ def score_completion_v2(
         well_formed=True, semantic_passed=True, task_passed=True,
         sl_valid=action_score.sl_valid, rr=action_score.rr, has_zone=None,
         zone_quality=None, entry_quality=action_score.entry_quality, outcome=action_score.outcome,
+        r_multiple=action_score.forward_result.r_multiple if action_score.forward_result is not None else None,
         buff_applied=buffed - action_score.raw_score, reward=reward,
     )
     if stats is not None:
