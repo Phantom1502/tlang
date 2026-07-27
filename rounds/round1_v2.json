@@ -1,6 +1,6 @@
 {
   "round_id": "round1_v2",
-  "zone_width_min_bins": 20,
+  "zone_width_min_bins": 12,
   "zone_width_max_bins": 40,
   "sl_min_dist_bins": 5,
   "sl_max_dist_bins": 20,
@@ -27,7 +27,7 @@
   "action_cancel_buy_buff_min": 0.0, "action_cancel_buy_buff_max": 0.05, "action_cancel_buy_buff_init": 0.0,
   "action_cancel_sell_buff_min": 0.0, "action_cancel_sell_buff_max": 0.05, "action_cancel_sell_buff_init": 0.0,
 
-  "action_wait_buy_buff_min": 0.0, "action_wait_buy_buff_max": 0.00, "action_wait_buy_buff_init": 0.0,
+  "action_wait_buy_buff_min": 0.0, "action_wait_buy_buff_max": 0.10, "action_wait_buy_buff_init": 0.0,
   "action_wait_sell_buff_min": 0.0, "action_wait_sell_buff_max": 0.00, "action_wait_sell_buff_init": 0.0,
 
   "zone_ema_alpha": 0.9,
