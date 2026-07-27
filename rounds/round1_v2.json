@@ -32,7 +32,7 @@
   "zone_buff_kp": 0.02,
   "zone_buff_kd": 0.01,
   "zone_buff_step_max": 0.01,
-  "zone_has_zone_buff_min": 0.0, "zone_has_zone_buff_max": 0.05, "zone_has_zone_buff_init": 0.0,
+  "zone_has_zone_buff_min": 0.0, "zone_has_zone_buff_max": 1.00, "zone_has_zone_buff_init": 0.0,
   "zone_no_zone_buff_min": 0.0, "zone_no_zone_buff_max": 2.00, "zone_no_zone_buff_init": 0.0,
 
   "rr_entropy_floor": 0.3,
