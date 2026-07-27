@@ -1,6 +1,6 @@
 {
   "round_id": "round1_v2",
-  "zone_width_min_bins": 14,
+  "zone_width_min_bins": 16,
   "zone_width_max_bins": 40,
   "sl_min_dist_bins": 5,
   "sl_max_dist_bins": 20,
@@ -20,7 +20,7 @@
   "action_wait_buy_target_ratio": 0.22,
   "action_wait_sell_target_ratio": 0.22,
 
-  "action_hold_buff_min": 0.0, "action_hold_buff_max": 0.00, "action_hold_buff_init": 0.0,
+  "action_hold_buff_min": 0.0, "action_hold_buff_max": 10.00, "action_hold_buff_init": 0.0,
 
   "action_buy_buff_min": 0.15, "action_buy_buff_max": 10, "action_buy_buff_init": 0.70,
   "action_sell_buff_min": 0.15, "action_sell_buff_max": 10, "action_sell_buff_init": 0.70,
