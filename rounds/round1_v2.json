@@ -1,6 +1,6 @@
 {
   "round_id": "round1_v2",
-  "zone_width_min_bins": 15,
+  "zone_width_min_bins": 14,
   "zone_width_max_bins": 40,
   "sl_min_dist_bins": 5,
   "sl_max_dist_bins": 20,
@@ -10,7 +10,7 @@
   "action_ema_alpha": 0.9,
   "action_buff_kp": 0.02,
   "action_buff_kd": 0.01,
-  "action_buff_step_max": 0.005,
+  "action_buff_step_max": 0.01,
 
   "action_hold_target_ratio": 0.06,
   "action_buy_target_ratio": 0.15,
@@ -22,21 +22,21 @@
 
   "action_hold_buff_min": 0.0, "action_hold_buff_max": 0.00, "action_hold_buff_init": 0.0,
 
-  "action_buy_buff_min": 0.15, "action_buy_buff_max": 1.75, "action_buy_buff_init": 0.70,
-  "action_sell_buff_min": 0.15, "action_sell_buff_max": 1.75, "action_sell_buff_init": 0.70,
-  "action_cancel_buy_buff_min": 0.0, "action_cancel_buy_buff_max": 0.05, "action_cancel_buy_buff_init": 0.0,
-  "action_cancel_sell_buff_min": 0.0, "action_cancel_sell_buff_max": 0.05, "action_cancel_sell_buff_init": 0.0,
+  "action_buy_buff_min": 0.15, "action_buy_buff_max": 10, "action_buy_buff_init": 0.70,
+  "action_sell_buff_min": 0.15, "action_sell_buff_max": 10, "action_sell_buff_init": 0.70,
+  "action_cancel_buy_buff_min": 0.0, "action_cancel_buy_buff_max": 10, "action_cancel_buy_buff_init": 0.0,
+  "action_cancel_sell_buff_min": 0.0, "action_cancel_sell_buff_max": 10, "action_cancel_sell_buff_init": 0.0,
 
-  "action_wait_buy_buff_min": 0.0, "action_wait_buy_buff_max": 1.50, "action_wait_buy_buff_init": 0.0,
-  "action_wait_sell_buff_min": 0.0, "action_wait_sell_buff_max": 0.00, "action_wait_sell_buff_init": 0.0,
+  "action_wait_buy_buff_min": 0.0, "action_wait_buy_buff_max": 10, "action_wait_buy_buff_init": 0.0,
+  "action_wait_sell_buff_min": 0.0, "action_wait_sell_buff_max": 10, "action_wait_sell_buff_init": 0.0,
 
   "zone_ema_alpha": 0.9,
   "zone_buff_kp": 0.02,
   "zone_buff_kd": 0.01,
-  "zone_buff_step_max": 0.005,
+  "zone_buff_step_max": 0.01,
 
-  "zone_has_zone_buff_min": 0.0, "zone_has_zone_buff_max": 0.00, "zone_has_zone_buff_init": 0.0,
-  "zone_no_zone_buff_min": 0.0, "zone_no_zone_buff_max": 0.60, "zone_no_zone_buff_init": 0.0,
+  "zone_has_zone_buff_min": 0.0, "zone_has_zone_buff_max": 10, "zone_has_zone_buff_init": 0.0,
+  "zone_no_zone_buff_min": 0.0, "zone_no_zone_buff_max": 10, "zone_no_zone_buff_init": 0.0,
 
   "rr_entropy_floor": 0.3,
   "rr_entropy_ema_alpha": 0.9,
