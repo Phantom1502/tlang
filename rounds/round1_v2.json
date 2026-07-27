@@ -1,6 +1,6 @@
 {
   "round_id": "round1_v2",
-  "zone_width_min_bins": 15,
+  "zone_width_min_bins": 16,
   "zone_width_max_bins": 40,
   "sl_min_dist_bins": 5,
   "sl_max_dist_bins": 20,
