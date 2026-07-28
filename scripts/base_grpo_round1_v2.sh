@@ -38,7 +38,7 @@ python -m app.training.train_grpo_v2 \
     --top_p 1.0 \
     --top_k 0 \
     \
-    --num_generations 16 \
+    --num_generations 128 \
     \
     --save_steps 100 \
     --save_total_limit 2 \
