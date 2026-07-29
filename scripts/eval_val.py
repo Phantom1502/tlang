@@ -301,7 +301,7 @@ def main() -> None:
     tok.padding_side = "left"
     logger.info(f"tokenizer vocab_size = {tok.vocab_size}")
 
-    model = LlamaForCausalLM.from_pretrained(args.model_repo).to(device)
+    model = LlamaForCausalLM.from_pretrained(args.model_repo, subfolder="last-checkpoint").to(device)
     model.eval()
     if model.config.vocab_size != tok.vocab_size:
         raise ValueError(
